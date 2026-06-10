@@ -1,0 +1,21 @@
+# Ambientes virtuais e pacotes
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+
+# Arquivos de configuração de IDE e Editor
+.vscode/
+.idea/
+
+# Logs e arquivos temporários do servidor
+*.log
+/tmp/
+*.xlsx
+
+# Arquivos de ambiente
+.env
+.env.*
+!.env.example

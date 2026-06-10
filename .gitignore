@@ -1,0 +1,9 @@
+# Arquivos de ambiente locais com senhas e chaves reais
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
