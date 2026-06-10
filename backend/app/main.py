@@ -63,15 +63,17 @@ from app.middlewares import SecurityHeadersMiddleware
 app.add_middleware(SecurityHeadersMiddleware)
 
 settings = get_settings()
-origins = [
+origins = list({
     settings.frontend_url,
     "http://localhost:3000",
-]
+    "http://127.0.0.1:3000",
+})
 
-# CORS Restrito (Removido wildcards)
+# CORS Restrito — inclui regex para deploys Vercel (*.vercel.app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"], # Bloqueia PUT, DELETE, PATCH
     allow_headers=["Authorization", "Content-Type", "Accept"], # Bloqueia headers maliciosos

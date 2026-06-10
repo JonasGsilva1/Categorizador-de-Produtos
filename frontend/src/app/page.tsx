@@ -6,8 +6,7 @@ import { supabase } from '@/lib/supabaseClient';
 import FileUploader from '../components/FileUploader';
 import ProcessingStatus from '../components/ProcessingStatus';
 import FeedbackUploader from '../components/FeedbackUploader';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { API_BASE } from '@/lib/api';
 
 interface JobStatus {
   id: string;
@@ -55,7 +54,7 @@ export default function Home() {
       if (job.status === 'COMPLETED' || job.status === 'FAILED') return;
 
       try {
-        const response = await fetch(`${API_URL}/api/jobs/${job.id}`, {
+        const response = await fetch(`${API_BASE}/jobs/${job.id}`, {
           headers: { Authorization: `Bearer ${session.access_token}` }
         });
         
@@ -85,7 +84,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${API_URL}/api/categorize`, {
+      const response = await fetch(`${API_BASE}/categorize`, {
         method: 'POST',
         body: formData,
         headers: { Authorization: `Bearer ${session.access_token}` }
@@ -110,14 +109,19 @@ export default function Home() {
       });
       
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro desconhecido ao iniciar.');
+      const message = err instanceof Error ? err.message : 'Erro desconhecido ao iniciar.';
+      setError(
+        message === 'Failed to fetch'
+          ? 'Não foi possível conectar ao backend. Verifique se NEXT_PUBLIC_API_URL (Vercel) e FRONTEND_URL (Railway) estão configurados corretamente.'
+          : message
+      );
     }
   };
 
   const handleDownload = async () => {
     if (!job || !session) return;
     try {
-      const response = await fetch(`${API_URL}/api/jobs/${job.id}/download`, {
+      const response = await fetch(`${API_BASE}/jobs/${job.id}/download`, {
         headers: { Authorization: `Bearer ${session.access_token}` }
       });
       

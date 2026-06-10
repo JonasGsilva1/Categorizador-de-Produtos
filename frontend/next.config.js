@@ -1,14 +1,36 @@
 /** @type {import('next').NextConfig} */
+const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || 'http://127.0.0.1:8000';
+const isVercel = Boolean(process.env.VERCEL);
+
+const connectSrc = [
+  "'self'",
+  'https://*.supabase.co',
+  backendUrl,
+  'http://localhost:8000',
+  'http://127.0.0.1:8000',
+]
+  .filter(Boolean)
+  .join(' ');
+
 const nextConfig = {
+  // Proxy só em dev local — em produção o browser chama o Railway direto (uploads grandes)
+  async rewrites() {
+    if (isVercel) return [];
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${backendUrl}/api/:path*`,
+      },
+    ];
+  },
   async headers() {
     return [
       {
         source: '/(.*)',
         headers: [
           {
-            // Protege contra injecao de scripts (XSS) e iframe injection
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http://localhost:8000 https://*.supabase.co; frame-ancestors 'none';",
+            value: `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src ${connectSrc}; frame-ancestors 'none';`,
           },
           {
             key: 'X-Content-Type-Options',
@@ -29,7 +51,7 @@ const nextConfig = {
           {
             key: 'Permissions-Policy',
             value: 'camera=(), microphone=(), geolocation=()',
-          }
+          },
         ],
       },
     ];

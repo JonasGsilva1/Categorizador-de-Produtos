@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import FileUploader from './FileUploader';
+import { API_BASE } from '@/lib/api';
 
 interface FeedbackResult {
   message: string;
@@ -10,8 +11,6 @@ interface FeedbackResult {
   errors: number;
   total: number;
 }
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function FeedbackUploader({ session }: { session: any }) {
   const [file, setFile] = useState<File | null>(null);
@@ -30,7 +29,7 @@ export default function FeedbackUploader({ session }: { session: any }) {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${API_URL}/api/feedback`, {
+      const response = await fetch(`${API_BASE}/feedback`, {
         method: 'POST',
         body: formData,
         headers: { Authorization: `Bearer ${session.access_token}` }
