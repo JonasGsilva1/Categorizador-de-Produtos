@@ -9,7 +9,7 @@ Recebe a planilha corrigida manualmente pelo usuário e realimenta o banco de da
 import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from app.auth import verify_supabase_token
-from app.database import get_pool
+from app.database import require_pool
 from app.models import FeedbackResponse
 from app.xlsx_io import read_feedback_products
 from app.services.embedding import generate_embedding
@@ -68,7 +68,7 @@ async def submit_feedback(
     logger.info(f"Feedback recebido: '{file.filename}' com {len(rows)} linhas válidas")
 
     # --- Processamento ---
-    pool = get_pool()
+    pool = require_pool()
     inserted = 0
     updated = 0
     errors = 0

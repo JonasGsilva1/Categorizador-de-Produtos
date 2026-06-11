@@ -10,7 +10,7 @@ import logging
 import asyncio
 from pathlib import Path
 from app.config import get_settings
-from app.database import get_pool
+from app.database import get_pool, require_pool
 from app.xlsx_io import read_products, write_results
 from app.services.funnel import process_single_product, FunnelMetrics
 
@@ -121,7 +121,7 @@ async def create_job(user_id: str, file_bytes: bytes, filename: str) -> str:
     Cria um registro de job no banco e salva o arquivo fisicamente,
     pronto para o processador de background.
     """
-    pool = get_pool()
+    pool = require_pool()
     settings = get_settings()
 
     async with pool.acquire() as conn:

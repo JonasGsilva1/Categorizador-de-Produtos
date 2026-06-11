@@ -57,6 +57,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     service: str = "categorizador-backend"
     version: str = "1.0.0"
+    database: str = "unknown"
 
 
 class FeedbackResponse(BaseModel):

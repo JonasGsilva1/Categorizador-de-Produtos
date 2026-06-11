@@ -22,5 +22,5 @@ COPY . .
 # Porta exposta (Railway injeta $PORT)
 EXPOSE 8000
 
-# Comando de execução
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Comando de execução (Railway injeta $PORT)
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info"]

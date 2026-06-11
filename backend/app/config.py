@@ -3,8 +3,13 @@ Configurações centralizadas da aplicação.
 Carrega variáveis de ambiente via Pydantic BaseSettings.
 """
 
-from pydantic_settings import BaseSettings
+import logging
 from functools import lru_cache
+
+from pydantic import ValidationError
+from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -46,4 +51,17 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Retorna instância cacheada das configurações."""
-    return Settings()
+    try:
+        return Settings()
+    except ValidationError as exc:
+        missing = [
+            ".".join(str(part) for part in err.get("loc", ()))
+            for err in exc.errors()
+            if err.get("type") == "missing"
+        ]
+        if missing:
+            logger.error(
+                "Variáveis de ambiente obrigatórias ausentes no Railway: %s",
+                ", ".join(missing),
+            )
+        raise

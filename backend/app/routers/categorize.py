@@ -9,7 +9,7 @@ import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import FileResponse
 from app.auth import verify_supabase_token
-from app.database import get_pool
+from app.database import require_pool
 from app.services.job_manager import create_job, start_job
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ async def categorize_products(
 @router.get("/jobs/{job_id}")
 async def get_job_status(job_id: str, user_id: str = Depends(verify_supabase_token)):
     """Consulta o status de um job."""
-    pool = get_pool()
+    pool = require_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -66,7 +66,7 @@ async def get_job_status(job_id: str, user_id: str = Depends(verify_supabase_tok
 @router.get("/jobs/{job_id}/download")
 async def download_job_result(job_id: str, user_id: str = Depends(verify_supabase_token)):
     """Baixa o arquivo .xlsx resultante de um job concluído."""
-    pool = get_pool()
+    pool = require_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT status, result_path FROM processing_jobs WHERE id = $1 AND user_id = $2",

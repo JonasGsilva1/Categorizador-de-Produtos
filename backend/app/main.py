@@ -5,11 +5,12 @@ Configura CORS, lifecycle hooks, routers e health check.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
-from app.database import create_pool, close_pool
+from app.database import create_pool, close_pool, is_pool_ready
 from app.models import HealthResponse
 from app.routers import categorize, feedback
 
@@ -33,9 +34,15 @@ async def lifespan(app: FastAPI):
     logger.info(f"   Modelo LLM: {settings.llm_model}")
     logger.info(f"   Threshold Similaridade: {settings.similarity_threshold}")
     logger.info(f"   Threshold Confiança LLM: {settings.llm_confidence_threshold}%")
+    logger.info(f"   PORT (Railway): {os.getenv('PORT', 'não definido')}")
 
-    await create_pool()
-    logger.info("   ✅ Pool de conexões PostgreSQL criado")
+    try:
+        await create_pool()
+        logger.info("   ✅ Pool de conexões PostgreSQL criado")
+    except Exception:
+        logger.exception(
+            "   ❌ Falha ao conectar ao PostgreSQL — /health responde, mas a API de dados ficará indisponível"
+        )
 
     yield
 
@@ -95,7 +102,11 @@ app.include_router(feedback.router)
 @app.get("/health", response_model=HealthResponse, tags=["Sistema"])
 async def health_check():
     """Verifica se a API está funcionando."""
-    return HealthResponse()
+    db_status = "connected" if is_pool_ready() else "unavailable"
+    return HealthResponse(
+        status="ok" if db_status == "connected" else "degraded",
+        database=db_status,
+    )
 
 
 @app.get("/", tags=["Sistema"])
