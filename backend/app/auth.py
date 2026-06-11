@@ -5,7 +5,7 @@ Verifica o token enviado pelo frontend para proteger as rotas.
 
 import logging
 import jwt
-from fastapi import Request, HTTPException, Security
+from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.config import get_settings
 
@@ -20,22 +20,15 @@ def verify_supabase_token(credentials: HTTPAuthorizationCredentials = Security(s
     token = credentials.credentials
     settings = get_settings()
 
-    # --- DEBUG: remover após identificar o problema ---
-    jwt_secret_preview = (settings.supabase_jwt_secret or "")[:8]
-    logger.info(
-        "[AUTH DEBUG] JWT secret configured: %s..., token prefix: %s..., token length: %d",
-        jwt_secret_preview or "(VAZIO)",
-        token[:20] if token else "(VAZIO)",
-        len(token) if token else 0,
-    )
-    # --- FIM DEBUG ---
-
     if not settings.supabase_jwt_secret:
-        logger.error("[AUTH] SUPABASE_JWT_SECRET está vazio ou não configurado no Railway!")
-        raise HTTPException(status_code=500, detail="Erro de configuração: JWT secret não configurado no servidor.")
+        logger.error("[AUTH] SUPABASE_JWT_SECRET não configurado!")
+        raise HTTPException(status_code=500, detail="Erro de configuração do servidor.")
+
+    if not token or len(token) < 20:
+        logger.warning("[AUTH] Token vazio ou muito curto recebido.")
+        raise HTTPException(status_code=401, detail="Token inválido.")
 
     try:
-        # Decodificar JWT do Supabase usando a chave secreta
         payload = jwt.decode(
             token,
             settings.supabase_jwt_secret,
@@ -51,7 +44,7 @@ def verify_supabase_token(credentials: HTTPAuthorizationCredentials = Security(s
 
     except jwt.ExpiredSignatureError:
         logger.warning("[AUTH] Token expirado.")
-        raise HTTPException(status_code=401, detail="Token expirado.")
+        raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
     except jwt.InvalidTokenError as e:
-        logger.warning("[AUTH] Token inválido: %s", str(e))
-        raise HTTPException(status_code=401, detail="Token inválido.")
+        logger.warning("[AUTH] Token invalido: %s", str(e))
+        raise HTTPException(status_code=401, detail="Token invalido.")

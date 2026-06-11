@@ -12,7 +12,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import create_pool, close_pool, is_pool_ready
 from app.models import HealthResponse
-from app.routers import categorize, feedback
 
 # Configuração de logging
 logging.basicConfig(
@@ -69,17 +68,25 @@ from app.middlewares import SecurityHeadersMiddleware
 
 app.add_middleware(SecurityHeadersMiddleware)
 
-settings = get_settings()
-origins = list({
-    settings.frontend_url,
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-})
+# --- CORS ---
+# Usa funcao lazy para nao crashar no import se as env vars nao existirem
+def _get_cors_origins():
+    try:
+        s = get_settings()
+        return list({
+            s.frontend_url,
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        })
+    except Exception:
+        return [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
 
-# CORS Restrito — inclui regex para deploys Vercel (*.vercel.app)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=_get_cors_origins(),
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"], # Bloqueia PUT, DELETE, PATCH
@@ -94,6 +101,8 @@ app.add_middleware(
 )
 
 # --- Routers ---
+from app.routers import categorize, feedback
+
 app.include_router(categorize.router)
 app.include_router(feedback.router)
 
@@ -101,12 +110,16 @@ app.include_router(feedback.router)
 # --- Health Check ---
 @app.get("/health", response_model=HealthResponse, tags=["Sistema"])
 async def health_check():
-    """Verifica se a API está funcionando."""
-    db_status = "connected" if is_pool_ready() else "unavailable"
-    return HealthResponse(
-        status="ok" if db_status == "connected" else "degraded",
-        database=db_status,
-    )
+    """Verifica se a API esta funcionando."""
+    try:
+        db_status = "connected" if is_pool_ready() else "unavailable"
+        return HealthResponse(
+            status="ok" if db_status == "connected" else "degraded",
+            database=db_status,
+        )
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return HealthResponse(status="error", database="error")
 
 
 @app.get("/", tags=["Sistema"])
