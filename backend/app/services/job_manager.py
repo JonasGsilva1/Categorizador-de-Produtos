@@ -12,7 +12,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.database import get_pool, require_pool
 from app.xlsx_io import read_products, write_results
-from app.services.funnel import process_single_product, FunnelMetrics
+from app.services.funnel import process_products, FunnelMetrics
 
 logger = logging.getLogger(__name__)
 

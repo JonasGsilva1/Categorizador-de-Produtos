@@ -9,7 +9,7 @@ import asyncio
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from google import genai
-from google.api_core import exceptions as google_exceptions
+from google.genai import errors as genai_errors
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -173,24 +173,35 @@ Certifique-se de manter exatamente o mesmo id_linha fornecido para cada produto.
             )
             return mapeamento
 
-        except google_exceptions.ResourceExhausted as e:
-            # Erro 429 — Rate Limit
+        except genai_errors.ClientError as e:
+            # 4xx — inclui 429 Resource Exhausted (rate limit)
             if attempt < max_retries:
                 delay = base_delay * (2 ** (attempt - 1))  # 10s, 20s, 40s
                 logger.warning(
-                    f"Rate Limit (429) no Gemini. Tentativa {attempt}/{max_retries}. "
+                    f"Client Error ({e.code}) no Gemini. Tentativa {attempt}/{max_retries}. "
                     f"Aguardando {delay}s antes de retry..."
                 )
                 await asyncio.sleep(delay)
             else:
                 logger.error(
-                    f"Rate Limit persistente após {max_retries} tentativas. "
+                    f"Client Error persistente ({e.code}) após {max_retries} tentativas. "
                     f"Lote de {len(products_chunk)} itens descartado."
                 )
                 return {}
 
-        except google_exceptions.GoogleAPIError as e:
-            logger.error(f"Erro da API do Gemini: {e}")
+        except genai_errors.ServerError as e:
+            # 5xx — erros internos do servidor
+            logger.error(f"Erro do servidor Gemini ({e.code}): {e}")
+            if attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                logger.info(f"Retry em {delay}s...")
+                await asyncio.sleep(delay)
+            else:
+                return {}
+
+        except genai_errors.APIError as e:
+            # Outros erros da API (não 4xx nem 5xx)
+            logger.error(f"Erro da API Gemini ({e.code}): {e}")
             if attempt < max_retries:
                 delay = base_delay * (2 ** (attempt - 1))
                 logger.info(f"Retry em {delay}s...")
