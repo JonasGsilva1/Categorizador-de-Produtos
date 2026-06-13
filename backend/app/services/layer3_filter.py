@@ -2,12 +2,11 @@
 Camada 3 do Funil: Filtro de Segurança.
 
 Aplica o limiar de confiança sobre a resposta do LLM:
-- Confiança >= 95%: Aprovado (preenche grupo/subgrupo)
-- Confiança < 95%: Pendente de Revisão (deixa grupo/subgrupo em branco)
+- Confiança >= 95: Aprovado (preenche grupo/subgrupo)
+- Confiança < 95: Pendente de Revisão (deixa grupo/subgrupo em branco)
 """
 
 import logging
-from app.config import get_settings
 from app.models import ProductInput, ProductOutput, LLMClassification
 
 logger = logging.getLogger(__name__)
@@ -18,17 +17,9 @@ def layer3_filter(
     llm_result: LLMClassification,
 ) -> ProductOutput:
     """
-    Aplica o filtro de segurança baseado no grau de confiança do LLM.
-    
-    Args:
-        product: Produto original
-        llm_result: Resultado da classificação do LLM
-    
-    Returns:
-        ProductOutput com status Aprovado ou Pendente de Revisão
+    Aplica o filtro de segurança rigoroso (>= 95).
     """
-    settings = get_settings()
-    threshold = settings.llm_confidence_threshold
+    threshold = 95
 
     if llm_result.grau_de_confianca >= threshold:
         logger.debug(

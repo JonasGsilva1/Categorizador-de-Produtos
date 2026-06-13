@@ -64,7 +64,7 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
                 # Reportar progresso a cada 10 itens ou no final
                 if processed_count % 10 == 0 or processed_count == total_rows:
                     async with pool.acquire() as conn:
-                        aprovados = metrics.layer1_ean_ncm + metrics.layer2_vector + metrics.layer2_llm_approved
+                        aprovados = metrics.layer1_ean + metrics.layer2_vector + metrics.layer2_llm_approved
                         await conn.execute(
                             """
                             UPDATE processing_jobs 
@@ -78,7 +78,7 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
         tasks = [_process_and_track(p) for p in products]
         results = await asyncio.gather(*tasks)
 
-        # 3. Gerar XLSX final
+        # 3. Gerar XLSX final via Pandas (xlsx_io)
         results_sorted = sorted(results, key=lambda r: r.row_index)
         output_buffer = write_results(results_sorted)
 
@@ -88,7 +88,7 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
 
         # 4. Finalizar job
         async with pool.acquire() as conn:
-            aprovados = metrics.layer1_ean_ncm + metrics.layer2_vector + metrics.layer2_llm_approved
+            aprovados = metrics.layer1_ean + metrics.layer2_vector + metrics.layer2_llm_approved
             await conn.execute(
                 """
                 UPDATE processing_jobs 

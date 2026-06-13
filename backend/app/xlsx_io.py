@@ -1,103 +1,78 @@
 """
-Leitura e escrita de arquivos .xlsx.
-- Leitura com openpyxl (read_only para eficiência de memória)
-- Escrita com xlsxwriter (streaming para arquivos grandes)
+Leitura e escrita de arquivos .xlsx via Pandas.
+- Leitura rápida com pd.read_excel em lote.
+- Escrita usando pd.DataFrame.to_excel e xlsxwriter para manter formatação nativa.
 """
 
 import io
-from openpyxl import load_workbook
-from xlsxwriter import Workbook
+import pandas as pd
 from app.models import ProductInput, ProductOutput
 
 
 def read_products(file_bytes: bytes) -> list[ProductInput]:
     """
-    Lê a planilha .xlsx e extrai os produtos.
-    
+    Lê a planilha .xlsx usando Pandas e extrai os produtos.
     Espera colunas: Descrição, EAN, NCM (case-insensitive).
     Retorna lista de ProductInput com o índice da linha.
     """
-    wb = load_workbook(
-        filename=io.BytesIO(file_bytes),
-        read_only=True,
-        data_only=True,
-    )
-    ws = wb.active
+    df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+    df.columns = df.columns.astype(str).str.strip().str.lower().str.replace("_", " ")
 
-    # Mapear colunas pelo cabeçalho
-    header_map: dict[str, int] = {}
     header_aliases = {
         "descricao": ["descrição", "descricao", "description", "desc", "produto", "nome"],
         "ean": ["ean", "gtin", "codigo de barras", "código de barras", "cod barras", "barcode"],
         "ncm": ["ncm", "cod ncm", "código ncm"],
     }
-
-    first_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
-    for col_idx, cell_value in enumerate(first_row):
-        if cell_value is None:
-            continue
-        normalized = str(cell_value).strip().lower().replace("_", " ")
+    
+    col_map = {}
+    for col in df.columns:
         for field, aliases in header_aliases.items():
-            if normalized in aliases:
-                header_map[field] = col_idx
+            if col in aliases and field not in col_map:
+                col_map[col] = field
                 break
-
-    if "descricao" not in header_map:
-        wb.close()
+    
+    df = df.rename(columns=col_map)
+    
+    if "descricao" not in df.columns:
         raise ValueError(
             "Coluna 'Descrição' não encontrada na planilha. "
             "Colunas aceitas: " + ", ".join(header_aliases["descricao"])
         )
 
-    # Extrair produtos
+    if "ean" not in df.columns:
+        df["ean"] = ""
+    if "ncm" not in df.columns:
+        df["ncm"] = ""
+        
+    df["descricao"] = df["descricao"].fillna("").astype(str).str.strip()
+    df["ean"] = df["ean"].fillna("").astype(str).str.strip()
+    df["ncm"] = df["ncm"].fillna("").astype(str).str.strip()
+    
+    df["ean"] = df["ean"].apply(lambda x: x[:-2] if x.endswith(".0") else x)
+    df["ncm"] = df["ncm"].apply(lambda x: x[:-2] if x.endswith(".0") else x)
+    
     products: list[ProductInput] = []
-    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-        descricao_val = row[header_map["descricao"]] if header_map.get("descricao") is not None else None
-
-        if not descricao_val or str(descricao_val).strip() == "":
+    for row_idx, row in df.iterrows():
+        excel_row = int(row_idx) + 2
+        if not row["descricao"]:
             continue
-
-        ean_val = ""
-        if "ean" in header_map and header_map["ean"] < len(row):
-            ean_raw = row[header_map["ean"]]
-            ean_val = str(ean_raw).strip() if ean_raw else ""
-            # Remover ".0" de EANs lidos como número
-            if ean_val.endswith(".0"):
-                ean_val = ean_val[:-2]
-
-        ncm_val = ""
-        if "ncm" in header_map and header_map["ncm"] < len(row):
-            ncm_raw = row[header_map["ncm"]]
-            ncm_val = str(ncm_raw).strip() if ncm_raw else ""
-            if ncm_val.endswith(".0"):
-                ncm_val = ncm_val[:-2]
-
         products.append(ProductInput(
-            row_index=row_idx,
-            descricao=str(descricao_val).strip(),
-            ean=ean_val,
-            ncm=ncm_val,
+            row_index=excel_row,
+            descricao=row["descricao"],
+            ean=row["ean"],
+            ncm=row["ncm"],
         ))
-
-    wb.close()
+        
     return products
 
 
 def read_feedback_products(file_bytes: bytes) -> list[dict]:
     """
-    Lê a planilha de retroalimentação (corrigida manualmente).
-    
-    Espera colunas: Descrição, EAN, NCM, Grupo, Subgrupo.
-    Retorna lista de dicts com os dados preenchidos.
+    Lê a planilha de retroalimentação (corrigida manualmente) via Pandas.
     """
-    wb = load_workbook(
-        filename=io.BytesIO(file_bytes),
-        read_only=True,
-        data_only=True,
-    )
-    ws = wb.active
+    df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+    df.columns = df.columns.astype(str).str.strip().str.lower().str.replace("_", " ")
 
-    header_map: dict[str, int] = {}
     header_aliases = {
         "descricao": ["descrição", "descricao", "description", "desc", "produto", "nome"],
         "ean": ["ean", "gtin", "codigo de barras", "código de barras"],
@@ -105,124 +80,116 @@ def read_feedback_products(file_bytes: bytes) -> list[dict]:
         "grupo": ["grupo", "category", "categoria"],
         "subgrupo": ["subgrupo", "subcategoria", "subcategory", "sub grupo"],
     }
-
-    first_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
-    for col_idx, cell_value in enumerate(first_row):
-        if cell_value is None:
-            continue
-        normalized = str(cell_value).strip().lower().replace("_", " ")
+    
+    col_map = {}
+    for col in df.columns:
         for field, aliases in header_aliases.items():
-            if normalized in aliases:
-                header_map[field] = col_idx
+            if col in aliases and field not in col_map:
+                col_map[col] = field
                 break
-
+                
+    df = df.rename(columns=col_map)
+    
     required = ["descricao", "grupo", "subgrupo"]
-    missing = [f for f in required if f not in header_map]
+    missing = [f for f in required if f not in df.columns]
     if missing:
-        wb.close()
         raise ValueError(f"Colunas obrigatórias não encontradas: {missing}")
 
-    rows: list[dict] = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        descricao = row[header_map["descricao"]] if header_map["descricao"] < len(row) else None
-        grupo = row[header_map["grupo"]] if header_map["grupo"] < len(row) else None
-        subgrupo = row[header_map["subgrupo"]] if header_map["subgrupo"] < len(row) else None
+    if "ean" not in df.columns:
+        df["ean"] = ""
+    if "ncm" not in df.columns:
+        df["ncm"] = ""
 
-        if not descricao or not grupo or not subgrupo:
-            continue
+    df["descricao"] = df["descricao"].fillna("").astype(str).str.strip()
+    df["grupo"] = df["grupo"].fillna("").astype(str).str.strip()
+    df["subgrupo"] = df["subgrupo"].fillna("").astype(str).str.strip()
+    df["ean"] = df["ean"].fillna("").astype(str).str.strip()
+    df["ncm"] = df["ncm"].fillna("").astype(str).str.strip()
+    
+    df["ean"] = df["ean"].apply(lambda x: x[:-2] if x.endswith(".0") else x)
+    df["ncm"] = df["ncm"].apply(lambda x: x[:-2] if x.endswith(".0") else x)
+    
+    df = df[df["descricao"] != ""]
+    df = df[df["grupo"] != ""]
+    df = df[df["subgrupo"] != ""]
 
-        ean_val = ""
-        if "ean" in header_map and header_map["ean"] < len(row):
-            ean_raw = row[header_map["ean"]]
-            ean_val = str(ean_raw).strip() if ean_raw else ""
-            if ean_val.endswith(".0"):
-                ean_val = ean_val[:-2]
-
-        ncm_val = ""
-        if "ncm" in header_map and header_map["ncm"] < len(row):
-            ncm_raw = row[header_map["ncm"]]
-            ncm_val = str(ncm_raw).strip() if ncm_raw else ""
-            if ncm_val.endswith(".0"):
-                ncm_val = ncm_val[:-2]
-
-        rows.append({
-            "descricao": str(descricao).strip(),
-            "ean": ean_val,
-            "ncm": ncm_val,
-            "grupo": str(grupo).strip(),
-            "subgrupo": str(subgrupo).strip(),
-        })
-
-    wb.close()
-    return rows
+    return df.to_dict("records")
 
 
 def write_results(products: list[ProductOutput]) -> io.BytesIO:
     """
-    Gera o .xlsx de resultado com as colunas do input + colunas de categorização.
-    Usa xlsxwriter em modo streaming (memória eficiente).
+    Gera o .xlsx de resultado via Pandas com formatação xlsxwriter.
     """
     output = io.BytesIO()
-
-    wb = Workbook(output, {"in_memory": True})
-    ws = wb.add_worksheet("Resultado")
-
-    # --- Estilos ---
-    header_fmt = wb.add_format({
-        "bold": True,
-        "bg_color": "#1a1a2e",
-        "font_color": "#e0e0ff",
-        "border": 1,
-        "text_wrap": True,
-        "align": "center",
-        "valign": "vcenter",
-        "font_size": 11,
-    })
-
-    approved_fmt = wb.add_format({
-        "bg_color": "#d4edda",
-        "font_color": "#155724",
-        "border": 1,
-    })
-
-    pending_fmt = wb.add_format({
-        "bg_color": "#fff3cd",
-        "font_color": "#856404",
-        "border": 1,
-    })
-
-    cell_fmt = wb.add_format({
-        "border": 1,
-        "text_wrap": True,
-        "valign": "vcenter",
-    })
-
-    # --- Cabeçalhos ---
-    headers = ["Descrição", "EAN", "NCM", "Grupo", "Subgrupo", "Origem da Decisão", "Status"]
-    col_widths = [50, 16, 12, 20, 25, 22, 20]
-
-    for col, (header, width) in enumerate(zip(headers, col_widths)):
-        ws.set_column(col, col, width)
-        ws.write(0, col, header, header_fmt)
-
-    # --- Dados ---
-    for row_idx, product in enumerate(products, start=1):
-        ws.write(row_idx, 0, product.descricao, cell_fmt)
-        ws.write(row_idx, 1, product.ean, cell_fmt)
-        ws.write(row_idx, 2, product.ncm, cell_fmt)
-        ws.write(row_idx, 3, product.grupo, cell_fmt)
-        ws.write(row_idx, 4, product.subgrupo, cell_fmt)
-        ws.write(row_idx, 5, product.origem, cell_fmt)
-
-        status_fmt = approved_fmt if product.status == "Aprovado" else pending_fmt
-        ws.write(row_idx, 6, product.status, status_fmt)
-
-    # Filtro automático
-    ws.autofilter(0, 0, len(products), len(headers) - 1)
-
-    # Congelar painel de cabeçalho
-    ws.freeze_panes(1, 0)
-
-    wb.close()
+    
+    data = [
+        {
+            "Descrição": p.descricao,
+            "EAN": p.ean,
+            "NCM": p.ncm,
+            "Grupo": p.grupo,
+            "Subgrupo": p.subgrupo,
+            "Origem da Decisão": p.origem,
+            "Status": p.status,
+        }
+        for p in products
+    ]
+    df = pd.DataFrame(data)
+    
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name="Resultado", index=False)
+        workbook = writer.book
+        worksheet = writer.sheets["Resultado"]
+        
+        header_fmt = workbook.add_format({
+            "bold": True,
+            "bg_color": "#1a1a2e",
+            "font_color": "#e0e0ff",
+            "border": 1,
+            "text_wrap": True,
+            "align": "center",
+            "valign": "vcenter",
+            "font_size": 11,
+        })
+        
+        cell_fmt = workbook.add_format({
+            "border": 1,
+            "text_wrap": True,
+            "valign": "vcenter",
+        })
+        
+        approved_fmt = workbook.add_format({
+            "bg_color": "#d4edda",
+            "font_color": "#155724",
+            "border": 1,
+        })
+        
+        pending_fmt = workbook.add_format({
+            "bg_color": "#fff3cd",
+            "font_color": "#856404",
+            "border": 1,
+        })
+        
+        headers = ["Descrição", "EAN", "NCM", "Grupo", "Subgrupo", "Origem da Decisão", "Status"]
+        col_widths = [50, 16, 12, 20, 25, 22, 20]
+        
+        for col_idx, (header, width) in enumerate(zip(headers, col_widths)):
+            worksheet.set_column(col_idx, col_idx, width)
+            worksheet.write(0, col_idx, header, header_fmt)
+            
+        for row_idx, p in enumerate(products, start=1):
+            worksheet.write(row_idx, 0, p.descricao, cell_fmt)
+            worksheet.write(row_idx, 1, p.ean, cell_fmt)
+            worksheet.write(row_idx, 2, p.ncm, cell_fmt)
+            worksheet.write(row_idx, 3, p.grupo, cell_fmt)
+            worksheet.write(row_idx, 4, p.subgrupo, cell_fmt)
+            worksheet.write(row_idx, 5, p.origem, cell_fmt)
+            
+            status_fmt = approved_fmt if p.status == "Aprovado" else pending_fmt
+            worksheet.write(row_idx, 6, p.status, status_fmt)
+            
+        worksheet.autofilter(0, 0, len(products), len(headers) - 1)
+        worksheet.freeze_panes(1, 0)
+        
     output.seek(0)
     return output

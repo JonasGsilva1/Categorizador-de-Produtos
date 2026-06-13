@@ -1,14 +1,13 @@
 """
 Camada 2 do Funil: Inteligência Artificial.
 
-1. Converte descrição em embedding (OpenAI text-embedding-3-small)
-2. Busca por similaridade de cosseno no pgvector (threshold > 0.98)
-3. Se não encontrou match vetorial, classifica via LLM (gpt-4o-mini) com Structured Outputs
+1. Converte descrição em embedding
+2. Busca por similaridade de cosseno no pgvector (threshold rigoroso > 0.98) APENAS por Descrição
+3. Se não encontrou match vetorial, classifica via LLM
 """
 
 import logging
 import asyncpg
-from app.config import get_settings
 from app.models import ProductInput, VectorMatch, LLMClassification
 from app.services.embedding import generate_embedding
 from app.services.llm import classify_product
@@ -19,21 +18,14 @@ logger = logging.getLogger(__name__)
 async def vector_search(
     embedding: list[float],
     pool: asyncpg.Pool,
-    threshold: float | None = None,
+    threshold: float = 0.98,
 ) -> VectorMatch | None:
     """
-    Executa busca por similaridade de cosseno no pgvector.
-    
-    Usa a função RPC match_products ou query direta.
+    Executa busca por similaridade de cosseno no pgvector ignorando NCM.
     
     Returns:
-        VectorMatch se similaridade >= threshold, None caso contrário.
+        VectorMatch se similaridade >= 0.98, None caso contrário.
     """
-    settings = get_settings()
-    if threshold is None:
-        threshold = settings.similarity_threshold
-
-    # Converter embedding para string do formato pgvector
     embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
 
     async with pool.acquire() as conn:
@@ -117,18 +109,12 @@ async def layer2_ai(
     1. Gera embedding da descrição
     2. Busca vetorial no histórico
     3. Se não encontrou, classifica via LLM
-    
-    Returns:
-        Tupla: (embedding, vector_match_or_none, llm_result_or_none)
     """
-    # Gerar embedding
     embedding = await generate_embedding(product.descricao)
 
-    # Busca vetorial
-    match = await vector_search(embedding, pool)
+    match = await vector_search(embedding, pool, threshold=0.98)
     if match:
         return embedding, match, None
 
-    # Classificação via LLM
     llm_result = await classify_product(product.descricao, product.ncm)
     return embedding, None, llm_result
