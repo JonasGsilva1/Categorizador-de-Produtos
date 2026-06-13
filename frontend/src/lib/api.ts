@@ -7,7 +7,7 @@
  */
 function resolveApiBase(): string {
   const url = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (url) return `${url}/api`;
+  if (url) return url;
   return '/api';
 }
 
