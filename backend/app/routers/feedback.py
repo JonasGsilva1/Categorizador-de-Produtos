@@ -117,40 +117,6 @@ async def submit_feedback(
                 else:
                     updated += 1
 
-                # 3. Upsert na ean_rules (se EAN preenchido)
-                if row["ean"] and row["ean"].strip():
-                    await conn.execute(
-                        """
-                        INSERT INTO ean_rules (ean, grupo, subgrupo)
-                        VALUES ($1, $2, $3)
-                        ON CONFLICT (ean) DO UPDATE SET
-                            grupo = EXCLUDED.grupo,
-                            subgrupo = EXCLUDED.subgrupo,
-                            updated_at = NOW()
-                        """,
-                        row["ean"].strip(),
-                        row["grupo"],
-                        row["subgrupo"],
-                    )
-
-                # 4. Upsert na ncm_rules (se NCM preenchido, usar como prefixo)
-                if row["ncm"] and row["ncm"].strip():
-                    clean_ncm = row["ncm"].strip().replace(".", "").replace("-", "").replace("/", "")
-                    if clean_ncm:
-                        await conn.execute(
-                            """
-                            INSERT INTO ncm_rules (ncm_prefix, grupo, subgrupo)
-                            VALUES ($1, $2, $3)
-                            ON CONFLICT (ncm_prefix) DO UPDATE SET
-                                grupo = EXCLUDED.grupo,
-                                subgrupo = EXCLUDED.subgrupo,
-                                updated_at = NOW()
-                            """,
-                            clean_ncm,
-                            row["grupo"],
-                            row["subgrupo"],
-                        )
-
         except Exception as e:
             logger.error(
                 f"Erro ao processar feedback para '{row['descricao'][:50]}': {e}",

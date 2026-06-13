@@ -1,11 +1,12 @@
 """
 Cliente Google Gemini para classificação de produtos via LLM com Structured Outputs.
-Usa gemini-1.5-flash com Pydantic Schema.
+Usa gemini-1.5-flash com TypedDict Schema para precisão cirúrgica de JSON.
 """
 
 import logging
+import json
+from typing import TypedDict
 from google import genai
-from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.models import LLMClassification
 
@@ -21,25 +22,42 @@ def _get_client() -> genai.Client:
         _client = genai.Client(api_key=settings.gemini_api_key)
     return _client
 
-class GeminiClassificationSchema(BaseModel):
-    grupo: str = Field(description="Grupo/categoria principal do produto")
-    subgrupo: str = Field(description="Subcategoria mais específica do produto")
-    grau_de_confianca: int = Field(description="Grau de confiança na classificação, de 0 a 100")
 
-SYSTEM_PROMPT = """Você é um especialista em categorização de produtos de varejo e supermercado brasileiro.
-A [Descrição] é a única fonte da verdade; ignore o [NCM] se for divergente ou industrial. Para produtos óbvios (utilidades, alimentos), o 'grau_de_confianca' deve ser obrigatoriamente > 95.
-Sua tarefa é classificar produtos em Grupo e Subgrupo com base na descrição fornecida."""
+# 1. Injeção de Taxonomia (Cardápio Fixo)
+TAXONOMIA_PERMITIDA = [
+    "Alimentos > Mercearia",
+    "Alimentos > Perecíveis",
+    "Bebidas > Alcoólicas",
+    "Bebidas > Não Alcoólicas",
+    "Limpeza > Limpeza da Casa",
+    "Limpeza > Lavanderia",
+    "Higiene > Cuidados Pessoais",
+    "Higiene > Cabelos",
+    "Pets > Cães e Gatos",
+    "Bazar > Utilidades Domésticas"
+]
+
+# 2. Configuração Exata da API do Gemini (TypedDict)
+class GeminiClassificationSchema(TypedDict):
+    grupo: str
+    subgrupo: str
+    grau_de_confianca: int
+
+
+# 3. O Novo Prompt do Gemini
+SYSTEM_PROMPT = f"""Você é um classificador determinístico de dados de varejo.
+REGRA 1: A Descrição é a ÚNICA fonte da verdade. Ignore o NCM se for industrial ou divergente.
+REGRA 2: Você DEVE classificar escolhendo estritamente entre estas opções: {', '.join(TAXONOMIA_PERMITIDA)}. Não invente categorias. Se o produto for óbvio e estiver na lista, atribua confiança entre 85 e 100."""
 
 async def classify_product(descricao: str, ncm: str = "") -> LLMClassification:
     """
-    Classifica um produto usando Gemini com Structured Outputs.
+    Classifica um produto usando Gemini com parâmetros exatos.
     """
-    settings = get_settings()
     client = _get_client()
 
-    user_message = f"Descrição do produto: {descricao}"
+    user_message = f"Produto: {descricao}"
     if ncm:
-        user_message += f"\nCódigo NCM: {ncm}"
+        user_message += f" | NCM: {ncm}"
 
     try:
         response = await client.aio.models.generate_content(
@@ -50,25 +68,16 @@ async def classify_product(descricao: str, ncm: str = "") -> LLMClassification:
             config={
                 "response_mime_type": "application/json",
                 "response_schema": GeminiClassificationSchema,
-                "temperature": 0.1,
+                "temperature": 0.1, # Zerando a criatividade
             }
         )
 
-        if response.parsed:
-            parsed = response.parsed
-            return LLMClassification(
-                grupo=parsed.grupo,
-                subgrupo=parsed.subgrupo,
-                grau_de_confianca=max(0, min(100, parsed.grau_de_confianca)),
-            )
-        else:
-            import json
-            data = json.loads(response.text)
-            return LLMClassification(
-                grupo=data.get("grupo", ""),
-                subgrupo=data.get("subgrupo", ""),
-                grau_de_confianca=data.get("grau_de_confianca", 0),
-            )
+        data = json.loads(response.text)
+        return LLMClassification(
+            grupo=data.get("grupo", ""),
+            subgrupo=data.get("subgrupo", ""),
+            grau_de_confianca=int(data.get("grau_de_confianca", 0)),
+        )
 
     except Exception as e:
         logger.error(f"Erro ao classificar produto '{descricao}': {e}")
