@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     gemini_api_key: str
 
     # --- Auth ---
-    supabase_jwt_secret: str
+    supabase_jwt_secret: str = ""
+    supabase_url: str = ""
 
     # --- Funil ---
     similarity_threshold: float = 0.98
