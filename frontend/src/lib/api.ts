@@ -1,14 +1,7 @@
 /**
- * Em produção (Vercel): chama o Railway diretamente.
- * Em desenvolvimento local: usa /api com proxy do Next.js (next.config.js rewrites).
+ * URL base da API.
  *
- * Os routers do backend ja incluem o prefixo /api, entao aqui usamos
- * apenas a URL base do backend (sem duplicar /api).
+ * O proxy do Next.js (next.config.js) redireciona /api/* para o Railway.
+ * Entao usamos /api como base em todos os ambientes.
  */
-function resolveApiBase(): string {
-  const url = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (url) return url;
-  return '/api';
-}
-
-export const API_BASE = resolveApiBase();
+export const API_BASE = '/api';

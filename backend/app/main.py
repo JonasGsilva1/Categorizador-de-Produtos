@@ -77,11 +77,15 @@ def _get_cors_origins():
             s.frontend_url,
             "http://localhost:3000",
             "http://127.0.0.1:3000",
+            "https://categorizador.vercel.app",
+            "https://categorizador-production.up.railway.app",
         })
     except Exception:
         return [
             "http://localhost:3000",
             "http://127.0.0.1:3000",
+            "https://categorizador.vercel.app",
+            "https://categorizador-production.up.railway.app",
         ]
 
 app.add_middleware(

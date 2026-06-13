@@ -1,10 +1,12 @@
 /** @type {import('next').NextConfig} */
-const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || 'http://127.0.0.1:8000';
-const isVercel = Boolean(process.env.VERCEL);
+const RAILWAY_BACKEND_URL = "https://categorizador-production.up.railway.app";
+
+const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || RAILWAY_BACKEND_URL;
 
 const connectSrc = [
   "'self'",
   'https://*.supabase.co',
+  'https://*.supabase.com',
   backendUrl,
   'http://localhost:8000',
   'http://127.0.0.1:8000',
@@ -13,9 +15,8 @@ const connectSrc = [
   .join(' ');
 
 const nextConfig = {
-  // Proxy só em dev local — em produção o browser chama o Railway direto (uploads grandes)
+  // Proxy: /api/* -> Railway (funciona em dev E producao)
   async rewrites() {
-    if (isVercel) return [];
     return [
       {
         source: '/api/:path*',
