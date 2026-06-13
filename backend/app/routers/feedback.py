@@ -70,7 +70,13 @@ async def submit_feedback(
     logger.info(f"Feedback recebido: '{file.filename}' com {len(rows)} linhas válidas")
 
     # --- Processamento ---
-    pool = require_pool()
+    try:
+        pool = require_pool()
+    except HTTPException:
+        raise  # Já é 503 do require_pool
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Erro de DB: {str(e)}")
+    
     inserted = 0
     updated = 0
     errors = 0
@@ -146,11 +152,11 @@ async def submit_feedback(
                         )
 
         except Exception as e:
-            errors += 1
             logger.error(
                 f"Erro ao processar feedback para '{row['descricao'][:50]}': {e}",
                 exc_info=True,
             )
+            raise HTTPException(status_code=503, detail=f"Erro de DB: {str(e)}")
 
     logger.info(
         f"Feedback processado: {inserted} inseridos, {updated} atualizados, {errors} erros"

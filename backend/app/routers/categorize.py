@@ -39,9 +39,12 @@ async def categorize_products(
         raise HTTPException(status_code=413, detail=f"Arquivo muito grande.")
 
     # 2. Cria o Job e salva arquivo temporariamente
-    job_id, file_path = await create_job(user_id, file_bytes, file.filename)
+    try:
+        job_id, file_path = await create_job(user_id, file_bytes, file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Erro de DB: {str(e)}")
     
-    # 2. Inicia o background task
+    # 3. Inicia o background task
     background_tasks.add_task(start_job, job_id, file_path, user_id)
     
     return {"job_id": job_id, "message": "Processamento iniciado."}
@@ -50,15 +53,18 @@ async def categorize_products(
 async def get_job_status(job_id: str, user_data: dict = Depends(verify_supabase_token)):
     """Consulta o status de um job."""
     user_id = user_data["user_id"]
-    pool = require_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT id, status, total_rows, processed_rows, aprovados, pendentes, erros, error_message 
-            FROM processing_jobs WHERE id = $1 AND user_id = $2
-            """,
-            job_id, user_id
-        )
+    try:
+        pool = require_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, status, total_rows, processed_rows, aprovados, pendentes, erros, error_message 
+                FROM processing_jobs WHERE id = $1 AND user_id = $2
+                """,
+                job_id, user_id
+            )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Erro de DB: {str(e)}")
     
     if not row:
         raise HTTPException(status_code=404, detail="Job não encontrado.")
@@ -69,12 +75,15 @@ async def get_job_status(job_id: str, user_data: dict = Depends(verify_supabase_
 async def download_job_result(job_id: str, user_data: dict = Depends(verify_supabase_token)):
     """Baixa o arquivo .xlsx resultante de um job concluído."""
     user_id = user_data["user_id"]
-    pool = require_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT status, result_path FROM processing_jobs WHERE id = $1 AND user_id = $2",
-            job_id, user_id
-        )
+    try:
+        pool = require_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, result_path FROM processing_jobs WHERE id = $1 AND user_id = $2",
+                job_id, user_id
+            )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Erro de DB: {str(e)}")
     
     if not row:
         raise HTTPException(status_code=404, detail="Job não encontrado.")

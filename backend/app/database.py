@@ -87,8 +87,8 @@ def require_pool() -> asyncpg.Pool:
     """Retorna o pool ou HTTP 503 com mensagem clara."""
     try:
         return get_pool()
-    except RuntimeError:
+    except RuntimeError as e:
         raise HTTPException(
             status_code=503,
-            detail="Banco de dados indisponível. Verifique DATABASE_URL no Railway (pooler porta 6543).",
+            detail=f"Erro de DB: {str(e)}",
         )
