@@ -35,13 +35,9 @@ async def lifespan(app: FastAPI):
     logger.info(f"   Threshold Confiança LLM: {settings.llm_confidence_threshold}%")
     logger.info(f"   PORT (Railway): {os.getenv('PORT', 'não definido')}")
 
-    try:
-        await create_pool()
-        logger.info("   ✅ Pool de conexões PostgreSQL criado")
-    except Exception:
-        logger.exception(
-            "   ❌ Falha ao conectar ao PostgreSQL — /health responde, mas a API de dados ficará indisponível"
-        )
+    # Garante que a pool seja criada com sucesso, senão a aplicação não iniciará.
+    await create_pool()
+    logger.info("   ✅ Pool de conexões PostgreSQL criado")
 
     yield
 
