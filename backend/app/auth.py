@@ -1,103 +1,75 @@
 """
 Autenticação Supabase JWT.
-Suporta RS256 (JWKS) e HS256 (shared secret).
+Usa o cliente oficial do Supabase (supabase-py) para validar tokens.
+Suporta HS256, RS256 e ES256 automaticamente.
 """
 
 import logging
-import jwt
-try:
-    from jwt import PyJWKClient
-    _HAS_JWKS = True
-except ImportError:
-    _HAS_JWKS = False
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
-# Cache do cliente JWKS (RS256)
-_jwks_client = None
+# Cliente Supabase (lazy init para não crashar se variáveis não existirem)
+_supabase_client = None
+
+def get_supabase_client():
+    """Retorna cliente Supabase inicializado com URL e anon key."""
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+    
+    from supabase import create_client
+    import os
+    
+    url = os.getenv("SUPABASE_URL", "")
+    key = os.getenv("SUPABASE_ANON_KEY", "")
+    
+    if not url or not key:
+        logger.warning("[AUTH] SUPABASE_URL ou SUPABASE_ANON_KEY não configurados.")
+        return None
+    
+    try:
+        _supabase_client = create_client(url, key)
+        logger.info("[AUTH] Cliente Supabase inicializado.")
+        return _supabase_client
+    except Exception as e:
+        logger.error(f"[AUTH] Falha ao inicializar cliente Supabase: {e}")
+        return None
 
 
-def _get_jwks_client(supabase_url: str):
-    global _jwks_client
-    if not _HAS_JWKS:
-        raise RuntimeError("PyJWKClient nao disponivel. Instale 'cryptography'.")
-    if _jwks_client is None:
-        jwks_url = f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
-        _jwks_client = PyJWKClient(jwks_url)
-    return _jwks_client
-
-
-def verify_supabase_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
+def verify_supabase_token(
+    credentials: HTTPAuthorizationCredentials = Security(security)
+) -> dict:
     """
-    Verifica o token JWT do Supabase.
-    Tenta RS256 (JWKS) primeiro, depois HS256 (shared secret).
-    Retorna o user_id (sub).
+    Valida o token JWT do Supabase usando o cliente oficial.
+    Retorna os dados do usuário (user.id, user.email, etc).
     """
     token = credentials.credentials
-    settings = get_settings()
-
+    
     if not token or len(token) < 20:
         logger.warning("[AUTH] Token vazio ou muito curto recebido.")
-        raise HTTPException(status_code=401, detail="Token invalido.")
-
-    errors = []
-
-    # --- Tentativa 1: RS256/ES256 via JWKS ---
-    if _HAS_JWKS and settings.supabase_url:
-        try:
-            jwks_client = _get_jwks_client(settings.supabase_url)
-            signing_key = jwks_client.get_signing_key_from_jwt(token)
-            # Tenta RS256 e ES256 (Supabase pode usar qualquer um)
-            for algo in ["RS256", "ES256"]:
-                try:
-                    payload = jwt.decode(
-                        token,
-                        signing_key.key,
-                        algorithms=[algo],
-                        options={"verify_aud": False},
-                    )
-                    user_id = payload.get("sub")
-                    if user_id:
-                        logger.debug(f"[AUTH] Token validado via {algo} (JWKS).")
-                        return user_id
-                except jwt.InvalidTokenError:
-                    continue
-            errors.append("JWKS: token rejeitado por RS256 e ES256")
-        except Exception as e:
-            errors.append(f"JWKS: {e}")
-    else:
-        if not _HAS_JWKS:
-            logger.debug("[AUTH] PyJWKClient nao disponivel, pulando JWKS.")
-        if not settings.supabase_url:
-            logger.debug("[AUTH] SUPABASE_URL nao configurado, pulando JWKS.")
-
-    # --- Tentativa 2: HS256 via shared secret ---
-    if settings.supabase_jwt_secret:
-        try:
-            payload = jwt.decode(
-                token,
-                settings.supabase_jwt_secret,
-                algorithms=["HS256"],
-                options={"verify_aud": False},
-            )
-            user_id = payload.get("sub")
-            if user_id:
-                logger.debug("[AUTH] Token validado via HS256 (secret).")
-                return user_id
-        except Exception as e:
-            errors.append(f"HS256: {e}")
-    else:
-        logger.warning("[AUTH] SUPABASE_JWT_SECRET nao configurado — tentando apenas RS256.")
-
-    # --- Falhou em ambos ---
-    logger.warning("[AUTH] Token invalido. Erros: %s", "; ".join(errors))
-    # Verificar se é token expirado para dar mensagem mais útil
-    for err in errors:
-        if "ExpiredSignature" in err or "expired" in err.lower():
-            raise HTTPException(status_code=401, detail="Token expirado. Faca login novamente.")
-    raise HTTPException(status_code=401, detail="Token invalido.")
+        raise HTTPException(status_code=401, detail="Token inválido.")
+    
+    client = get_supabase_client()
+    if client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Erro de configuração: variáveis SUPABASE_URL/ANON_KEY não configuradas."
+        )
+    
+    try:
+        # O método get_user faz a validação automática do token
+        result = client.auth.get_user(token)
+        
+        if result and result.user:
+            logger.debug(f"[AUTH] Token validado para user_id: {result.user.id}")
+            return {"user_id": result.user.id, "email": result.user.email}
+        
+        raise HTTPException(status_code=401, detail="Token inválido.")
+        
+    except Exception as e:
+        logger.warning(f"[AUTH] Token invalido: {e}")
+        raise HTTPException(status_code=401, detail="Token inválido.")

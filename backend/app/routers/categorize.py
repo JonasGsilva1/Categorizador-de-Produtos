@@ -21,9 +21,10 @@ MAX_FILE_SIZE = 50 * 1024 * 1024
 async def categorize_products(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    user_id: str = Depends(verify_supabase_token)
+    user_data: dict = Depends(verify_supabase_token)
 ):
     """Envia planilha para categorização em background."""
+    user_id = user_data["user_id"]
     if not file.filename:
         raise HTTPException(status_code=400, detail="Arquivo inválido.")
 
@@ -46,8 +47,9 @@ async def categorize_products(
     return {"job_id": job_id, "message": "Processamento iniciado."}
 
 @router.get("/jobs/{job_id}")
-async def get_job_status(job_id: str, user_id: str = Depends(verify_supabase_token)):
+async def get_job_status(job_id: str, user_data: dict = Depends(verify_supabase_token)):
     """Consulta o status de um job."""
+    user_id = user_data["user_id"]
     pool = require_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -64,8 +66,9 @@ async def get_job_status(job_id: str, user_id: str = Depends(verify_supabase_tok
     return dict(row)
 
 @router.get("/jobs/{job_id}/download")
-async def download_job_result(job_id: str, user_id: str = Depends(verify_supabase_token)):
+async def download_job_result(job_id: str, user_data: dict = Depends(verify_supabase_token)):
     """Baixa o arquivo .xlsx resultante de um job concluído."""
+    user_id = user_data["user_id"]
     pool = require_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

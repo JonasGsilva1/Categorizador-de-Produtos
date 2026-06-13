@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api", tags=["Retroalimentação"])
 @router.post("/feedback", response_model=FeedbackResponse)
 async def submit_feedback(
     file: UploadFile = File(...),
-    user_id: str = Depends(verify_supabase_token)
+    user_data: dict = Depends(verify_supabase_token)
 ):
     """
     Endpoint de retroalimentação.
@@ -36,6 +36,8 @@ async def submit_feedback(
     3. Insere/atualiza regras de EAN (se preenchido)
     4. Insere/atualiza regras de NCM (se preenchido, usando prefixo)
     """
+    user_id = user_data["user_id"]
+    
     # --- Validação ---
     if not file.filename or not file.filename.endswith((".xlsx", ".XLSX")):
         raise HTTPException(
