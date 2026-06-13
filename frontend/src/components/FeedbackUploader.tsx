@@ -29,7 +29,7 @@ export default function FeedbackUploader({ session }: { session: any }) {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${API_BASE}/feedback`, {
+      const response = await fetch(`${API_BASE}/feedback/`, {
         method: 'POST',
         body: formData,
         headers: { Authorization: `Bearer ${session.access_token}` }

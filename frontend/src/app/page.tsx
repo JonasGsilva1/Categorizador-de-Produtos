@@ -54,7 +54,7 @@ export default function Home() {
       if (job.status === 'COMPLETED' || job.status === 'FAILED') return;
 
       try {
-        const response = await fetch(`${API_BASE}/jobs/${job.id}`, {
+        const response = await fetch(`${API_BASE}/jobs/${job.id}/`, {
           headers: { Authorization: `Bearer ${session.access_token}` }
         });
         
@@ -84,7 +84,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${API_BASE}/categorize`, {
+      const response = await fetch(`${API_BASE}/categorize/`, {
         method: 'POST',
         body: formData,
         headers: { Authorization: `Bearer ${session.access_token}` }
@@ -121,7 +121,7 @@ export default function Home() {
   const handleDownload = async () => {
     if (!job || !session) return;
     try {
-      const response = await fetch(`${API_BASE}/jobs/${job.id}/download`, {
+      const response = await fetch(`${API_BASE}/jobs/${job.id}/download/`, {
         headers: { Authorization: `Bearer ${session.access_token}` }
       });
       
