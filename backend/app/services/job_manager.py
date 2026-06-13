@@ -47,36 +47,22 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
                 total_rows, job_id
             )
 
-        # 2. Processar (Com Semáforo para Rate Limit)
-        metrics = FunnelMetrics()
-        metrics.total = total_rows
-        semaphore = asyncio.Semaphore(10) # 10 chamadas concorrentes max para Gemini
+        # 2. Processar Lotes (Chunking gerido por funnel.py)
+        results, summary = await process_products(products, pool, concurrency=5)
 
-        results = []
-        processed_count = 0
-
-        async def _process_and_track(product):
-            nonlocal processed_count
-            async with semaphore:
-                result = await process_single_product(product, pool, metrics)
-                processed_count += 1
-                
-                # Reportar progresso a cada 10 itens ou no final
-                if processed_count % 10 == 0 or processed_count == total_rows:
-                    async with pool.acquire() as conn:
-                        aprovados = metrics.layer1_ean + metrics.layer2_vector + metrics.layer2_llm_approved
-                        await conn.execute(
-                            """
-                            UPDATE processing_jobs 
-                            SET processed_rows = $1, aprovados = $2, pendentes = $3, erros = $4
-                            WHERE id = $5
-                            """,
-                            processed_count, aprovados, metrics.layer2_llm_pending, metrics.errors, job_id
-                        )
-                return result
-
-        tasks = [_process_and_track(p) for p in products]
-        results = await asyncio.gather(*tasks)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE processing_jobs 
+                SET processed_rows = $1, aprovados = $2, pendentes = $3, erros = $4
+                WHERE id = $5
+                """,
+                summary["total_processado"], 
+                summary["camada1_ean"] + summary["camada2_busca_vetorial"] + summary["camada2_llm_aprovado"], 
+                summary["camada2_llm_pendente_revisao"], 
+                summary["erros"], 
+                job_id
+            )
 
         # 3. Gerar XLSX final via Pandas (xlsx_io)
         results_sorted = sorted(results, key=lambda r: r.row_index)
@@ -88,7 +74,7 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
 
         # 4. Finalizar job
         async with pool.acquire() as conn:
-            aprovados = metrics.layer1_ean + metrics.layer2_vector + metrics.layer2_llm_approved
+            aprovados = summary["camada1_ean"] + summary["camada2_busca_vetorial"] + summary["camada2_llm_aprovado"]
             await conn.execute(
                 """
                 UPDATE processing_jobs 
@@ -96,7 +82,7 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
                     aprovados = $3, pendentes = $4, erros = $5
                 WHERE id = $6
                 """,
-                result_path, total_rows, aprovados, metrics.layer2_llm_pending, metrics.errors, job_id
+                result_path, total_rows, aprovados, summary["camada2_llm_pendente_revisao"], summary["erros"], job_id
             )
 
     except Exception as e:

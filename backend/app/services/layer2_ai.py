@@ -10,7 +10,7 @@ import logging
 import asyncpg
 from app.models import ProductInput, VectorMatch, LLMClassification
 from app.services.embedding import generate_embedding
-from app.services.llm import classify_product
+from app.services.llm import classify_products_batch
 
 logger = logging.getLogger(__name__)
 
@@ -116,5 +116,7 @@ async def layer2_ai(
     if match:
         return embedding, match, None
 
-    llm_result = await classify_product(product.descricao, product.ncm)
-    return embedding, None, llm_result
+    # NOTA: layer2_ai não é mais chamado pelo funnel.py.
+    # O processamento em lote é feito via classify_products_batch em funnel.py.
+    # Mantido aqui apenas para referência histórica.
+    raise NotImplementedError("layer2_ai foi substituído pelo processamento em lote do funnel.py")
