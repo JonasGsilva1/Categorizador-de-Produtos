@@ -14,17 +14,24 @@ logger = logging.getLogger(__name__)
 
 def layer3_filter(
     product: ProductInput,
-    llm_result_dict: dict,
+    llm_result: dict | object,
 ) -> ProductOutput:
     """
-    Aplica o filtro de segurança (>= 85) no dicionário de resposta do lote.
+    Aplica o filtro de segurança (>= 85) no resultado do lote.
+    Aceita tanto dicts quanto objetos Pydantic (ProdutoCategorizado).
     """
     threshold = 85
     
-    # Extrair os campos do dicionário
-    grupo = llm_result_dict.get("grupo", "")
-    subgrupo = llm_result_dict.get("subgrupo", "")
-    grau_de_confianca = llm_result_dict.get("grau_de_confianca", 0)
+    # Suporte a dict e Pydantic model
+    def _get(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+    
+    # Extrair os campos
+    grupo = _get(llm_result, "grupo", "")
+    subgrupo = _get(llm_result, "subgrupo", "")
+    grau_de_confianca = _get(llm_result, "grau_de_confianca", 0)
 
     if grau_de_confianca >= threshold:
         logger.debug(

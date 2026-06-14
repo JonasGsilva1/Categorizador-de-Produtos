@@ -49,13 +49,16 @@ async def process_products(
     metrics.total = len(products)
     results: list[ProductOutput] = []
 
-    # Passo 1: Processar Camadas 1 e 2 sequencial/concorrentemente
+    # Passo 1: Processar Camadas 1 e 2 com controle de concorrência
     pendentes_llm = []
     
-    semaphore = asyncio.Semaphore(concurrency)
+    # Semáforo de conexões DB: pool max_size=10, reservamos 2 para overhead
+    # Cada coroutine pode precisar de até 2 conexões (layer1 + vector_search),
+    # então limitamos a 4 coroutines simultâneas = 8 conexões max
+    db_semaphore = asyncio.Semaphore(4)
     
     async def process_l1_l2(product: ProductInput):
-        async with semaphore:
+        async with db_semaphore:
             # Camada 1
             l1_result = await layer1_lookup(product, pool)
             if l1_result:
@@ -86,15 +89,24 @@ async def process_products(
             return None, product, embedding
 
     logger.info(f"Iniciando avaliação rápida das Camadas 1 e 2 ({len(products)} itens)")
-    tasks = [process_l1_l2(p) for p in products]
-    l1_l2_results = await asyncio.gather(*tasks)
     
-    # Separar os resultados e os pendentes
-    for output, product, embedding in l1_l2_results:
-        if output:
-            results.append(output)
-        elif product:
-            pendentes_llm.append((product, embedding))
+    # Processar em lotes seguros para evitar explosão de tasks
+    l1_l2_batch_size = 50
+    for batch_start in range(0, len(products), l1_l2_batch_size):
+        batch = products[batch_start:batch_start + l1_l2_batch_size]
+        tasks = [process_l1_l2(p) for p in batch]
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for result in batch_results:
+            if isinstance(result, Exception):
+                logger.error(f"Erro inesperado na Camada 1/2: {result}")
+                metrics.errors += 1
+                continue
+            output, product, embedding = result
+            if output:
+                results.append(output)
+            elif product:
+                pendentes_llm.append((product, embedding))
 
     # Passo 2: Processar Camada 3 em Lotes (Chunks)
     chunk_size = 30

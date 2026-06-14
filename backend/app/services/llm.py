@@ -157,7 +157,7 @@ Certifique-se de manter exatamente o mesmo id_linha fornecido para cada produto.
             for item in produtos_raw:
                 validado = _validate_produto(item, item.get("id_linha", -1))
                 if validado:
-                    mapeamento[validado["id_linha"]] = validado
+                    mapeamento[validado.id_linha] = validado
 
             # Log de itens ausentes na resposta
             ids_esperados = {p["id_linha"] for p in products_chunk}

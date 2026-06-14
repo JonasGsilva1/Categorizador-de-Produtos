@@ -8,6 +8,7 @@ import os
 import uuid
 import logging
 import asyncio
+import traceback
 from pathlib import Path
 from app.config import get_settings
 from app.database import get_pool, require_pool
@@ -86,11 +87,19 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
             )
 
     except Exception as e:
-        logger.error(f"Job {job_id} falhou: {e}", exc_info=True)
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE processing_jobs SET status = 'FAILED', error_message = $1 WHERE id = $2",
-                str(e), job_id
+        tb = traceback.format_exc()
+        error_detail = f"{type(e).__name__}: {e}\n\n{tb}"
+        logger.error(f"Job {job_id} falhou: {error_detail}")
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE processing_jobs SET status = 'FAILED', error_message = $1 WHERE id = $2",
+                    error_detail[:4000], job_id
+                )
+        except Exception as db_err:
+            logger.critical(
+                f"FALHA DUPLA no job {job_id}: erro original={e}, "
+                f"erro ao gravar status FAILED no DB={db_err}"
             )
             
     finally:
