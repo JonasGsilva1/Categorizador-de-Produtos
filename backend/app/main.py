@@ -71,7 +71,8 @@ from app.middlewares import SecurityHeadersMiddleware, RequestIDMiddleware, Rate
 
 # Ordem dos Middlewares: de fora pra dentro (são executados de baixo pra cima no código)
 # 1. Trusted Host (O mais básico, rejeita hosts inválidos antes de tudo)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=_settings.allowed_hosts)
+_hosts = [h.strip() for h in _settings.allowed_hosts.split(",") if h.strip()]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts)
 
 # 2. CORS (Executado depois do Trusted Host)
 

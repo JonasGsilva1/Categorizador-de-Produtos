@@ -6,7 +6,7 @@ Carrega variáveis de ambiente via Pydantic BaseSettings.
 import logging
 from functools import lru_cache
 
-from pydantic import ValidationError, field_validator
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -46,14 +46,7 @@ class Settings(BaseSettings):
     environment: str = "development"  # "production" em Railway
     rate_limit_per_minute: int = 60   # Requests gerais por IP
     upload_rate_limit_per_minute: int = 5  # Uploads por IP
-    allowed_hosts: list[str] = ["*"]  # Configurar em prod para *.up.railway.app
-
-    @field_validator("allowed_hosts", mode="before")
-    @classmethod
-    def parse_allowed_hosts(cls, v):
-        if isinstance(v, str):
-            return [host.strip() for host in v.split(",") if host.strip()]
-        return v
+    allowed_hosts: str = "*"  # Configurar em prod para *.up.railway.app (separado por vírgulas)
 
     model_config = {
         "env_file": ".env",
