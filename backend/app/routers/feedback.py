@@ -6,13 +6,15 @@ Recebe a planilha corrigida manualmente pelo usuário e realimenta o banco de da
 - Insere/atualiza regras em ean_rules e ncm_rules
 """
 
+import re
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from app.auth import verify_supabase_token
 from app.database import require_pool
 from app.models import FeedbackResponse
 from app.xlsx_io import read_feedback_products
 from app.services.embedding import generate_embedding
+from app.audit import log_audit_event
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ router = APIRouter(prefix="/api", tags=["Retroalimentação"])
 
 @router.post("/feedback", response_model=FeedbackResponse)
 async def submit_feedback(
+    request: Request,
     file: UploadFile = File(...),
     user_data: dict = Depends(verify_supabase_token)
 ):
@@ -29,17 +32,18 @@ async def submit_feedback(
     
     Recebe um arquivo .xlsx corrigido manualmente com colunas:
     Descrição, EAN, NCM, Grupo, Subgrupo.
-    
-    Para cada linha com Grupo e Subgrupo preenchidos:
-    1. Gera embedding da Descrição
-    2. Insere/atualiza no product_history (upsert)
-    3. Insere/atualiza regras de EAN (se preenchido)
-    4. Insere/atualiza regras de NCM (se preenchido, usando prefixo)
     """
     user_id = user_data["user_id"]
+    req_id = getattr(request.state, 'req_id', 'unknown')
+    client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "127.0.0.1").split(",")[0].strip()
     
-    # --- Validação ---
-    if not file.filename or not file.filename.endswith((".xlsx", ".XLSX")):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Arquivo inválido.")
+
+    # --- Validação e Sanitização ---
+    safe_filename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', file.filename)
+    if not safe_filename.lower().endswith((".xlsx", ".xls")):
+        log_audit_event(user_id, "FEEDBACK", safe_filename, client_ip, req_id, "failure", "Extensão inválida")
         raise HTTPException(
             status_code=400,
             detail="Formato inválido. Envie um arquivo .xlsx.",
@@ -48,6 +52,11 @@ async def submit_feedback(
     file_bytes = await file.read()
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Arquivo vazio.")
+        
+    # Validação Anti-Malware (Magic Bytes)
+    if len(file_bytes) < 4 or not file_bytes.startswith(b'PK\x03\x04'):
+        log_audit_event(user_id, "FEEDBACK", safe_filename, client_ip, req_id, "failure", "Falha de Magic Bytes")
+        raise HTTPException(status_code=415, detail="Arquivo corrompido ou malicioso. Apenas formatos XLSX reais são permitidos.")
 
     # --- Leitura da planilha ---
     try:
@@ -127,6 +136,8 @@ async def submit_feedback(
     logger.info(
         f"Feedback processado: {inserted} inseridos, {updated} atualizados, {errors} erros"
     )
+
+    log_audit_event(user_id, "FEEDBACK", safe_filename, client_ip, req_id, "success", f"In:{inserted} Up:{updated} Err:{errors}")
 
     return FeedbackResponse(
         message="Retroalimentação processada com sucesso.",

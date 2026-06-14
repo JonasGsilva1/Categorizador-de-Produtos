@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # --- Storage ---
     temp_storage_path: str = "/tmp"
 
+    # --- Security ---
+    environment: str = "development"  # "production" em Railway
+    rate_limit_per_minute: int = 60   # Requests gerais por IP
+    upload_rate_limit_per_minute: int = 5  # Uploads por IP
+    allowed_hosts: list[str] = ["*"]  # Configurar em prod para *.up.railway.app
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

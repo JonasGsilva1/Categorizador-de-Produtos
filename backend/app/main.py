@@ -48,6 +48,9 @@ async def lifespan(app: FastAPI):
 
 
 # --- App ---
+_settings = get_settings()
+_is_prod = _settings.environment.lower() == "production"
+
 app = FastAPI(
     title="Categorizador Inteligente de Produtos",
     description=(
@@ -57,12 +60,29 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
+    docs_url=None if _is_prod else "/docs",
+    redoc_url=None if _is_prod else "/redoc",
+    openapi_url=None if _is_prod else "/openapi.json"
 )
 
 # --- Hardening & Security Middlewares ---
-from app.middlewares import SecurityHeadersMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from app.middlewares import SecurityHeadersMiddleware, RequestIDMiddleware, RateLimitMiddleware
 
+# Ordem dos Middlewares: de fora pra dentro (são executados de baixo pra cima no código)
+# 1. Trusted Host (O mais básico, rejeita hosts inválidos antes de tudo)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_settings.allowed_hosts)
+
+# 2. CORS (Executado depois do Trusted Host)
+
+# 3. Security Headers (CSP, HSTS, etc)
 app.add_middleware(SecurityHeadersMiddleware)
+
+# 4. Rate Limiter (Protege rotas de brute force/DDoS)
+app.add_middleware(RateLimitMiddleware)
+
+# 5. Request ID (Para LGPD / Rastreabilidade)
+app.add_middleware(RequestIDMiddleware)
 
 # --- CORS ---
 # Usa funcao lazy para nao crashar no import se as env vars nao existirem
@@ -106,6 +126,23 @@ from app.routers import categorize, feedback
 app.include_router(categorize.router)
 app.include_router(feedback.router)
 
+
+# --- Global Exception Handler (LGPD) ---
+from fastapi.responses import JSONResponse
+import traceback
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """
+    Impede que stacktraces ou detalhes internos do DB/App vazem para o cliente.
+    Loga tudo internamente, mas retorna erro genérico 500.
+    """
+    req_id = getattr(request.state, 'req_id', 'unknown')
+    logger.error(f"[ReqID: {req_id}] Erro interno não tratado: {exc}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Erro interno no servidor. Tente novamente mais tarde.", "req_id": req_id}
+    )
 
 # --- Health Check ---
 @app.get("/health", response_model=HealthResponse, tags=["Sistema"])
