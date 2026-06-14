@@ -12,7 +12,7 @@ import asyncpg
 from app.models import ProductInput, ProductOutput
 from app.services.layer1_deterministic import layer1_lookup
 from app.services.layer2_ai import vector_search, save_to_history
-from app.services.embedding import generate_embedding
+from app.services.embedding import generate_embeddings_batch
 from app.services.llm import classify_products_batch
 from app.services.layer3_filter import layer3_filter
 
@@ -53,60 +53,79 @@ async def process_products(
     pendentes_llm = []
     
     # Semáforo de conexões DB: pool max_size=10, reservamos 2 para overhead
-    # Cada coroutine pode precisar de até 2 conexões (layer1 + vector_search),
-    # então limitamos a 4 coroutines simultâneas = 8 conexões max
+    # Cada coroutine pode precisar de conexões independentes
     db_semaphore = asyncio.Semaphore(4)
     
-    async def process_l1_l2(product: ProductInput):
-        async with db_semaphore:
-            # Camada 1
-            l1_result = await layer1_lookup(product, pool)
-            if l1_result:
-                metrics.layer1_ean += 1
-                logger.info(f"[Linha {product.row_index}] Camada 1 ✓ EAN → {l1_result.grupo}/{l1_result.subgrupo}")
-                return l1_result, None, None
-            
-            # Camada 2
-            embedding = await generate_embedding(product.descricao)
-            vector_match = await vector_search(embedding, pool, threshold=0.98)
-            
-            if vector_match:
-                metrics.layer2_vector += 1
-                logger.info(f"[Linha {product.row_index}] Camada 2 ✓ Busca Vetorial → {vector_match.grupo}/{vector_match.subgrupo}")
-                output = ProductOutput(
-                    row_index=product.row_index,
-                    descricao=product.descricao,
-                    ean=product.ean,
-                    ncm=product.ncm,
-                    grupo=vector_match.grupo,
-                    subgrupo=vector_match.subgrupo,
-                    origem="Busca Vetorial",
-                    status="Aprovado",
-                )
-                return output, None, None
-                
-            # Adiar LLM
-            return None, product, embedding
-
     logger.info(f"Iniciando avaliação rápida das Camadas 1 e 2 ({len(products)} itens)")
     
     # Processar em lotes seguros para evitar explosão de tasks
     l1_l2_batch_size = 50
     for batch_start in range(0, len(products), l1_l2_batch_size):
         batch = products[batch_start:batch_start + l1_l2_batch_size]
-        tasks = [process_l1_l2(p) for p in batch]
-        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        for result in batch_results:
-            if isinstance(result, Exception):
-                logger.error(f"Erro inesperado na Camada 1/2: {result}")
+        # 1.1 Processar Camada 1 para todos no batch
+        async def do_l1(prod):
+            async with db_semaphore:
+                return await layer1_lookup(prod, pool)
+                
+        l1_tasks = [do_l1(p) for p in batch]
+        l1_results = await asyncio.gather(*l1_tasks, return_exceptions=True)
+        
+        needs_l2 = []
+        for p, l1_res in zip(batch, l1_results):
+            if isinstance(l1_res, Exception):
+                logger.error(f"Erro inesperado na Camada 1: {l1_res}")
                 metrics.errors += 1
                 continue
-            output, product, embedding = result
-            if output:
+            if l1_res:
+                metrics.layer1_ean += 1
+                logger.info(f"[Linha {p.row_index}] Camada 1 ✓ EAN → {l1_res.grupo}/{l1_res.subgrupo}")
+                results.append(l1_res)
+            else:
+                needs_l2.append(p)
+                
+        if not needs_l2:
+            continue
+            
+        # 1.2 Gerar Embeddings em BATCH para a Camada 2
+        # Evita 429 RESOURCE_EXHAUSTED limitando chamadas API a 1 por batch em vez de 50
+        descriptions = [p.descricao for p in needs_l2]
+        batch_embeddings = await generate_embeddings_batch(descriptions)
+        
+        # 1.3 Processar Camada 2 para os que têm embedding
+        async def do_l2(prod, emb):
+            # Fallback se embedding falhar (zeros)
+            if not any(emb):
+                return None
+            async with db_semaphore:
+                return await vector_search(emb, pool, threshold=0.98)
+                
+        l2_tasks = [do_l2(p, emb) for p, emb in zip(needs_l2, batch_embeddings)]
+        l2_results = await asyncio.gather(*l2_tasks, return_exceptions=True)
+        
+        for p, emb, vector_match in zip(needs_l2, batch_embeddings, l2_results):
+            if isinstance(vector_match, Exception):
+                logger.error(f"Erro inesperado na Camada 2: {vector_match}")
+                metrics.errors += 1
+                continue
+                
+            if vector_match:
+                metrics.layer2_vector += 1
+                logger.info(f"[Linha {p.row_index}] Camada 2 ✓ Busca Vetorial → {vector_match.grupo}/{vector_match.subgrupo}")
+                output = ProductOutput(
+                    row_index=p.row_index,
+                    descricao=p.descricao,
+                    ean=p.ean,
+                    ncm=p.ncm,
+                    grupo=vector_match.grupo,
+                    subgrupo=vector_match.subgrupo,
+                    origem="Busca Vetorial",
+                    status="Aprovado",
+                )
                 results.append(output)
-            elif product:
-                pendentes_llm.append((product, embedding))
+            else:
+                # Adiar LLM
+                pendentes_llm.append((p, emb))
 
     # Passo 2: Processar Camada 3 em Lotes (Chunks)
     chunk_size = 30

@@ -4,7 +4,9 @@ Suporta chamadas assíncronas para o modelo gemini-embedding-001.
 """
 
 import logging
+import asyncio
 from google import genai
+from google.genai import errors as genai_errors
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -57,18 +59,40 @@ async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
         batch = texts[i:i + batch_size]
         clean_batch = [t.strip().replace("\n", " ") if t.strip() else "vazio" for t in batch]
 
-        try:
-            # Gemini suporta passar uma lista de strings
-            response = await client.aio.models.embed_content(
-                model=settings.embedding_model,
-                contents=clean_batch,
-                config={"output_dimensionality": settings.embedding_dimensions}
-            )
-            # Extrair os valores
-            batch_embeddings = [emb.values for emb in response.embeddings]
-            all_embeddings.extend(batch_embeddings)
-        except Exception as e:
-            logger.error(f"Erro ao gerar embeddings para batch {i}: {e}")
+        max_retries = 3
+        base_delay = 10
+        batch_success = False
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Gemini suporta passar uma lista de strings
+                response = await client.aio.models.embed_content(
+                    model=settings.embedding_model,
+                    contents=clean_batch,
+                    config={"output_dimensionality": settings.embedding_dimensions}
+                )
+                # Extrair os valores
+                batch_embeddings = [emb.values for emb in response.embeddings]
+                all_embeddings.extend(batch_embeddings)
+                batch_success = True
+                break
+                
+            except genai_errors.ClientError as e:
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"Client Error ({e.code}) no Gemini Embeddings. Tentativa {attempt}/{max_retries}. "
+                        f"Aguardando {delay}s antes de retry..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"Erro ao gerar embeddings após {max_retries} tentativas: {e}")
+                    
+            except Exception as e:
+                logger.error(f"Erro inesperado ao gerar embeddings para batch {i}: {e}")
+                break
+
+        if not batch_success:
             all_embeddings.extend([[0.0] * settings.embedding_dimensions] * len(batch))
 
     return all_embeddings
