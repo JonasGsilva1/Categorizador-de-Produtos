@@ -28,13 +28,22 @@ def _get_client() -> genai.Client:
 def _extract_retry_delay(error_message: str) -> float:
     """
     Extrai o tempo de espera exigido pelo servidor a partir da mensagem de erro.
-    Busca o padrão 'retryDelay': 'Xs' usando regex.
+    Cobre dois formatos retornados pela API:
+      - Texto: "Please retry in 10.15007533s" (decimais ignoradas)
+      - Dicionário: "'retryDelay': '53s'"
     Retorna o delay em segundos + 1s de margem de segurança.
     Se não encontrar, retorna 60s como fallback fixo.
     """
+    # Formato dicionário: 'retryDelay': '53s'
     match = re.search(r"'retryDelay':\s*'(\d+)s'", error_message)
     if match:
         return int(match.group(1)) + 1
+
+    # Formato texto: Please retry in 10.15007533s (captura apenas a parte inteira)
+    match = re.search(r"retry in (\d+)", error_message, re.IGNORECASE)
+    if match:
+        return int(match.group(1)) + 1
+
     return 60
 
 
