@@ -30,12 +30,12 @@ def _extract_retry_delay(error_message: str) -> float:
     Extrai o tempo de espera exigido pelo servidor a partir da mensagem de erro.
     Cobre dois formatos retornados pela API:
       - Texto: "Please retry in 10.15007533s" (decimais ignoradas)
-      - Dicionário: "'retryDelay': '53s'"
+      - Dicionário: 'retryDelay': '53s' ou "retryDelay": "53s"
     Retorna o delay em segundos + 1s de margem de segurança.
     Se não encontrar, retorna 60s como fallback fixo.
     """
-    # Formato dicionário: 'retryDelay': '53s'
-    match = re.search(r"'retryDelay':\s*'(\d+)s'", error_message)
+    # Formato dicionário: 'retryDelay': '53s' ou "retryDelay": "53s"
+    match = re.search(r"['\"]retryDelay['\"]:\s*['\"]?(\d+)s['\"]?", error_message)
     if match:
         return int(match.group(1)) + 1
 
@@ -123,12 +123,13 @@ async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
                 
             except genai_errors.ClientError as e:
                 error_str = str(e)
+                logger.debug(f"[DEBUG] Raw error string: {error_str}")
                 if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
                     delay = _extract_retry_delay(error_str)
                     logger.warning(
                         f"Rate limit (429/RESOURCE_EXHAUSTED) no batch {i}. "
                         f"Tentativa {attempt}/{max_retries}. "
-                        f"Aguardando {delay}s antes de retry..."
+                        f"Delay extraído: {delay}s. Aguardando antes de retry..."
                     )
                     await asyncio.sleep(delay)
                 elif attempt < max_retries:
