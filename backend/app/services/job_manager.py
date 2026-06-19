@@ -5,116 +5,139 @@ atualizando a tabela `processing_jobs` no Supabase com o status e as métricas.
 """
 
 import os
-import uuid
 import logging
-import asyncio
 import traceback
-from pathlib import Path
 from app.config import get_settings
 from app.database import get_pool, require_pool
 from app.xlsx_io import read_products, write_results
-from app.services.funnel import process_products, FunnelMetrics
+from app.services.funnel import process_products
 
 logger = logging.getLogger(__name__)
 
+
 async def start_job(job_id: str, file_path: str, user_id: str) -> None:
     """
-    Função principal executada em background.
-    1. Lê a planilha.
-    2. Atualiza o total_rows no job.
-    3. Processa produto a produto com concorrência e reporta progresso ao DB.
+    Função principal executada em background via asyncio.create_task().
+    1. Atualiza status para PROCESSING.
+    2. Lê a planilha.
+    3. Executa o funil de categorização.
     4. Salva XLSX final e atualiza job para COMPLETED.
     """
+    logger.info(f"[Job {job_id[:8]}] ▶ Background task iniciada.")
     pool = get_pool()
     settings = get_settings()
 
     try:
         # Mudar status para PROCESSING
-        async with pool.acquire() as conn:
+        logger.info(f"[Job {job_id[:8]}] Atualizando status → PROCESSING...")
+        async with pool.acquire(timeout=15) as conn:
             await conn.execute(
                 "UPDATE processing_jobs SET status = 'PROCESSING' WHERE id = $1",
                 job_id
             )
+        logger.info(f"[Job {job_id[:8]}] Status → PROCESSING ✓")
 
         # 1. Ler arquivo
+        logger.info(f"[Job {job_id[:8]}] Lendo arquivo: {file_path}")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Arquivo temporário não encontrado: {file_path}")
+
         with open(file_path, "rb") as f:
             file_bytes = f.read()
+
         products = read_products(file_bytes)
         total_rows = len(products)
+        logger.info(f"[Job {job_id[:8]}] {total_rows} produtos lidos.")
 
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=15) as conn:
             await conn.execute(
                 "UPDATE processing_jobs SET total_rows = $1 WHERE id = $2",
                 total_rows, job_id
             )
 
-        # 2. Processar Lotes (Chunking gerido por funnel.py)
+        # 2. Processar via funil de 3 camadas
+        logger.info(f"[Job {job_id[:8]}] Iniciando funil (3 camadas)...")
         results, summary = await process_products(products, pool, concurrency=5)
+        logger.info(f"[Job {job_id[:8]}] Funil concluído: {summary}")
 
-        async with pool.acquire() as conn:
+        aprovados = (
+            summary["camada1_ean"]
+            + summary["camada2_busca_vetorial"]
+            + summary["camada2_llm_aprovado"]
+        )
+
+        async with pool.acquire(timeout=15) as conn:
             await conn.execute(
                 """
-                UPDATE processing_jobs 
+                UPDATE processing_jobs
                 SET processed_rows = $1, aprovados = $2, pendentes = $3, erros = $4
                 WHERE id = $5
                 """,
-                summary["total_processado"], 
-                summary["camada1_ean"] + summary["camada2_busca_vetorial"] + summary["camada2_llm_aprovado"], 
-                summary["camada2_llm_pendente_revisao"], 
-                summary["erros"], 
-                job_id
+                summary["total_processado"],
+                aprovados,
+                summary["camada2_llm_pendente_revisao"],
+                summary["erros"],
+                job_id,
             )
 
-        # 3. Gerar XLSX final via Pandas (xlsx_io)
+        # 3. Gerar XLSX de resultado
+        logger.info(f"[Job {job_id[:8]}] Gerando XLSX de resultado...")
         results_sorted = sorted(results, key=lambda r: r.row_index)
         output_buffer = write_results(results_sorted)
 
         result_path = os.path.join(settings.temp_storage_path, f"{job_id}_result.xlsx")
         with open(result_path, "wb") as f:
             f.write(output_buffer.getbuffer())
+        logger.info(f"[Job {job_id[:8]}] XLSX salvo: {result_path}")
 
-        # 4. Finalizar job
-        async with pool.acquire() as conn:
-            aprovados = summary["camada1_ean"] + summary["camada2_busca_vetorial"] + summary["camada2_llm_aprovado"]
+        # 4. Marcar como COMPLETED
+        async with pool.acquire(timeout=15) as conn:
             await conn.execute(
                 """
-                UPDATE processing_jobs 
-                SET status = 'COMPLETED', result_path = $1, processed_rows = $2, 
+                UPDATE processing_jobs
+                SET status = 'COMPLETED', result_path = $1, processed_rows = $2,
                     aprovados = $3, pendentes = $4, erros = $5
                 WHERE id = $6
                 """,
-                result_path, total_rows, aprovados, summary["camada2_llm_pendente_revisao"], summary["erros"], job_id
+                result_path,
+                total_rows,
+                aprovados,
+                summary["camada2_llm_pendente_revisao"],
+                summary["erros"],
+                job_id,
             )
+        logger.info(f"[Job {job_id[:8]}] ✅ Concluído com sucesso.")
 
     except Exception as e:
         tb = traceback.format_exc()
         error_detail = f"{type(e).__name__}: {e}\n\n{tb}"
-        logger.error(f"Job {job_id} falhou: {error_detail}")
+        logger.error(f"[Job {job_id[:8]}] ❌ Falhou:\n{error_detail}")
         try:
-            async with pool.acquire() as conn:
+            async with pool.acquire(timeout=15) as conn:
                 await conn.execute(
                     "UPDATE processing_jobs SET status = 'FAILED', error_message = $1 WHERE id = $2",
-                    error_detail[:4000], job_id
+                    error_detail[:4000],
+                    job_id,
                 )
         except Exception as db_err:
             logger.critical(
-                f"FALHA DUPLA no job {job_id}: erro original={e}, "
-                f"erro ao gravar status FAILED no DB={db_err}"
+                f"[Job {job_id[:8]}] FALHA DUPLA — original: {e} | DB: {db_err}"
             )
-            
+
     finally:
-        # LGPD: Deleção segura do arquivo original independentemente do sucesso ou falha
+        # LGPD: remover arquivo temporário original
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
-                logger.info(f"Arquivo temporário deletado com sucesso: {file_path}")
+                logger.info(f"[Job {job_id[:8]}] Arquivo temporário removido: {file_path}")
         except OSError as e:
-            logger.error(f"Falha ao deletar arquivo temporário {file_path}: {e}")
+            logger.error(f"[Job {job_id[:8]}] Falha ao remover arquivo temporário: {e}")
 
-async def create_job(user_id: str, file_bytes: bytes, filename: str) -> str:
+
+async def create_job(user_id: str, file_bytes: bytes, filename: str) -> tuple[str, str]:
     """
-    Cria um registro de job no banco e salva o arquivo fisicamente,
-    pronto para o processador de background.
+    Cria um registro de job no banco e salva o arquivo fisicamente.
+    Retorna (job_id, file_path).
     """
     pool = require_pool()
     settings = get_settings()
@@ -122,21 +145,23 @@ async def create_job(user_id: str, file_bytes: bytes, filename: str) -> str:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "INSERT INTO processing_jobs (user_id) VALUES ($1) RETURNING id",
-            user_id
+            user_id,
         )
         job_id = str(row["id"])
 
-    # Salvar arquivo
+    # Salvar arquivo temporário
     os.makedirs(settings.temp_storage_path, exist_ok=True)
     file_path = os.path.join(settings.temp_storage_path, f"{job_id}_{filename}")
-    
+
     with open(file_path, "wb") as f:
         f.write(file_bytes)
 
     async with pool.acquire() as conn:
         await conn.execute(
             "UPDATE processing_jobs SET file_path = $1 WHERE id = $2",
-            file_path, job_id
+            file_path,
+            job_id,
         )
 
+    logger.info(f"[Job {job_id[:8]}] Criado. Arquivo: {file_path}")
     return job_id, file_path
