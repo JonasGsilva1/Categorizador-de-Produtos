@@ -9,7 +9,8 @@ import re
 import uuid
 import asyncio
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Requestfrom fastapi.responses import FileResponse
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi.responses import FileResponse
 from app.auth import verify_supabase_token
 from app.database import require_pool
 from app.services.job_manager import create_job, start_job
