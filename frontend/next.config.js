@@ -1,7 +1,12 @@
 /** @type {import('next').NextConfig} */
 const RAILWAY_BACKEND_URL = "https://categorizador-production.up.railway.app";
 
-const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || RAILWAY_BACKEND_URL;
+// BACKEND_URL é server-only (sem NEXT_PUBLIC_) — usada pela Route Handler de proxy.
+// NEXT_PUBLIC_API_URL ainda é suportada para compatibilidade com dev local.
+const backendUrl =
+  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ||
+  RAILWAY_BACKEND_URL;
 
 const connectSrc = [
   "'self'",
@@ -16,15 +21,6 @@ const connectSrc = [
   .join(' ');
 
 const nextConfig = {
-  // Proxy: /api/* -> Railway (funciona em dev E producao)
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: `${backendUrl}/api/:path*`,
-      },
-    ];
-  },
   async headers() {
     return [
       {
