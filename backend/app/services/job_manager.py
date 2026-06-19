@@ -57,7 +57,24 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
 
         # 2. Processar via funil de 3 camadas
         logger.info(f"[Job {job_id[:8]}] Iniciando funil (3 camadas)...")
-        results, summary = await process_products(products, pool, concurrency=5)
+
+        async def _report_progress(processed: int, aprovados: int, pendentes: int, erros: int):
+            """Grava progresso intermediário no DB para o frontend acompanhar."""
+            try:
+                async with pool.acquire(timeout=10) as conn:
+                    await conn.execute(
+                        """
+                        UPDATE processing_jobs
+                        SET processed_rows = $1, aprovados = $2, pendentes = $3, erros = $4
+                        WHERE id = $5
+                        """,
+                        processed, aprovados, pendentes, erros, job_id,
+                    )
+                logger.info(f"[Job {job_id[:8]}] Progresso: {processed}/{total_rows} processados.")
+            except Exception as e:
+                logger.warning(f"[Job {job_id[:8]}] Falha ao gravar progresso: {e}")
+
+        results, summary = await process_products(products, pool, concurrency=5, on_progress=_report_progress)
         logger.info(f"[Job {job_id[:8]}] Funil concluído: {summary}")
 
         aprovados = (
@@ -65,20 +82,6 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
             + summary["camada2_busca_vetorial"]
             + summary["camada2_llm_aprovado"]
         )
-
-        async with pool.acquire(timeout=15) as conn:
-            await conn.execute(
-                """
-                UPDATE processing_jobs
-                SET processed_rows = $1, aprovados = $2, pendentes = $3, erros = $4
-                WHERE id = $5
-                """,
-                summary["total_processado"],
-                aprovados,
-                summary["camada2_llm_pendente_revisao"],
-                summary["erros"],
-                job_id,
-            )
 
         # 3. Gerar XLSX de resultado
         logger.info(f"[Job {job_id[:8]}] Gerando XLSX de resultado...")

@@ -8,6 +8,7 @@ Orquestrador do Funil de 3 Camadas com Processamento em Lotes.
 
 import logging
 import asyncio
+from typing import Callable, Awaitable
 import asyncpg
 from app.models import ProductInput, ProductOutput
 from app.services.layer1_deterministic import layer1_lookup
@@ -18,6 +19,10 @@ from app.services.layer3_filter import layer3_filter
 
 logger = logging.getLogger(__name__)
 
+# Tipo do callback de progresso: recebe (processed_rows, aprovados, pendentes, erros)
+ProgressCallback = Callable[[int, int, int, int], Awaitable[None]]
+
+
 class FunnelMetrics:
     def __init__(self):
         self.total: int = 0
@@ -26,6 +31,14 @@ class FunnelMetrics:
         self.layer2_llm_approved: int = 0
         self.layer2_llm_pending: int = 0
         self.errors: int = 0
+
+    @property
+    def resolved(self) -> int:
+        return self.layer1_ean + self.layer2_vector + self.layer2_llm_approved + self.layer2_llm_pending + self.errors
+
+    @property
+    def aprovados(self) -> int:
+        return self.layer1_ean + self.layer2_vector + self.layer2_llm_approved
 
     def summary(self) -> dict:
         return {
@@ -37,40 +50,40 @@ class FunnelMetrics:
             "erros": self.errors,
         }
 
+
 async def process_products(
     products: list[ProductInput],
     pool: asyncpg.Pool,
     concurrency: int = 5,
+    on_progress: ProgressCallback | None = None,
 ) -> tuple[list[ProductOutput], dict]:
     """
     Processa a lista de produtos com otimização de lotes na Camada 3.
+
+    on_progress: callback async chamado após cada lote de embeddings e após cada
+                 chunk LLM, permitindo que o job_manager grave o progresso no DB.
     """
     metrics = FunnelMetrics()
     metrics.total = len(products)
     results: list[ProductOutput] = []
-
-    # Passo 1: Processar Camadas 1 e 2 com controle de concorrência
     pendentes_llm = []
-    
-    # Semáforo de conexões DB: pool max_size=10, reservamos 2 para overhead
-    # Cada coroutine pode precisar de conexões independentes
+
     db_semaphore = asyncio.Semaphore(4)
-    
+
     logger.info(f"Iniciando avaliação rápida das Camadas 1 e 2 ({len(products)} itens)")
-    
-    # Processar em lotes seguros para evitar explosão de tasks
+
     l1_l2_batch_size = 50
     for batch_start in range(0, len(products), l1_l2_batch_size):
         batch = products[batch_start:batch_start + l1_l2_batch_size]
-        
-        # 1.1 Processar Camada 1 para todos no batch
+
+        # --- Camada 1 ---
         async def do_l1(prod):
             async with db_semaphore:
                 return await layer1_lookup(prod, pool)
-                
+
         l1_tasks = [do_l1(p) for p in batch]
         l1_results = await asyncio.gather(*l1_tasks, return_exceptions=True)
-        
+
         needs_l2 = []
         for p, l1_res in zip(batch, l1_results):
             if isinstance(l1_res, Exception):
@@ -83,36 +96,39 @@ async def process_products(
                 results.append(l1_res)
             else:
                 needs_l2.append(p)
-                
+
         if not needs_l2:
+            # Reportar progresso mesmo quando tudo resolveu na camada 1
+            if on_progress:
+                await on_progress(metrics.resolved, metrics.aprovados, metrics.layer2_llm_pending, metrics.errors)
             continue
-            
-        # 1.2 Gerar Embeddings em BATCH para a Camada 2
-        # Evita 429 RESOURCE_EXHAUSTED limitando chamadas API a 1 por batch em vez de 50
+
+        # --- Camada 2: Embeddings ---
+        logger.info(f"Gerando embeddings para {len(needs_l2)} itens (batch {batch_start // l1_l2_batch_size + 1})...")
         descriptions = [p.descricao for p in needs_l2]
         batch_embeddings = await generate_embeddings_batch(descriptions)
-        
-        # 1.3 Processar Camada 2 para os que têm embedding
+        logger.info(f"Embeddings gerados para batch {batch_start // l1_l2_batch_size + 1}.")
+
+        # --- Camada 2: Busca vetorial ---
         async def do_l2(prod, emb):
-            # Fallback se embedding falhar (zeros)
             if not any(emb):
                 return None
             async with db_semaphore:
                 return await vector_search(emb, pool, threshold=0.98)
-                
+
         l2_tasks = [do_l2(p, emb) for p, emb in zip(needs_l2, batch_embeddings)]
         l2_results = await asyncio.gather(*l2_tasks, return_exceptions=True)
-        
+
         for p, emb, vector_match in zip(needs_l2, batch_embeddings, l2_results):
             if isinstance(vector_match, Exception):
                 logger.error(f"Erro inesperado na Camada 2: {vector_match}")
                 metrics.errors += 1
                 continue
-                
+
             if vector_match:
                 metrics.layer2_vector += 1
-                logger.info(f"[Linha {p.row_index}] Camada 2 ✓ Busca Vetorial → {vector_match.grupo}/{vector_match.subgrupo}")
-                output = ProductOutput(
+                logger.info(f"[Linha {p.row_index}] Camada 2 ✓ Vetorial → {vector_match.grupo}/{vector_match.subgrupo}")
+                results.append(ProductOutput(
                     row_index=p.row_index,
                     descricao=p.descricao,
                     ean=p.ean,
@@ -121,43 +137,39 @@ async def process_products(
                     subgrupo=vector_match.subgrupo,
                     origem="Busca Vetorial",
                     status="Aprovado",
-                )
-                results.append(output)
+                ))
             else:
-                # Adiar LLM
                 pendentes_llm.append((p, emb))
 
-    # Passo 2: Processar Camada 3 em Lotes (Chunks)
+        # Reportar progresso após cada batch de embeddings+vetorial
+        if on_progress:
+            await on_progress(metrics.resolved, metrics.aprovados, metrics.layer2_llm_pending, metrics.errors)
+
+    # --- Camada 3: LLM em chunks ---
     chunk_size = 30
-    logger.info(f"{len(pendentes_llm)} itens enviados para a Camada 3 (LLM) em lotes de {chunk_size}")
-    
-    # Dividir em chunks
+    logger.info(f"{len(pendentes_llm)} itens para Camada 3 (LLM) em chunks de {chunk_size}")
+
     for i in range(0, len(pendentes_llm), chunk_size):
         chunk = pendentes_llm[i:i + chunk_size]
-        
-        # Preparar payload
+        chunk_num = i // chunk_size + 1
+        total_chunks = (len(pendentes_llm) + chunk_size - 1) // chunk_size
+
         payload = [
-            {
-                "id_linha": p[0].row_index, 
-                "descricao": p[0].descricao, 
-                "ncm": p[0].ncm
-            } 
+            {"id_linha": p[0].row_index, "descricao": p[0].descricao, "ncm": p[0].ncm}
             for p in chunk
         ]
-        
-        logger.info(f"Enviando lote de {len(payload)} itens para o Gemini...")
-        
-        # Chamar Gemini
+
+        logger.info(f"LLM chunk {chunk_num}/{total_chunks} — {len(payload)} itens...")
         resposta_lote = await classify_products_batch(payload)
-        
-        # Mapear e avaliar Filtro da Camada 3
+        logger.info(f"LLM chunk {chunk_num}/{total_chunks} — resposta recebida.")
+
         for product, embedding in chunk:
             llm_result_dict = resposta_lote.get(product.row_index, {})
-            
+
             if not llm_result_dict:
                 metrics.errors += 1
-                logger.warning(f"[Linha {product.row_index}] LLM falhou no lote → Pendente de Revisão")
-                output = ProductOutput(
+                logger.warning(f"[Linha {product.row_index}] LLM sem resultado → Pendente de Revisão")
+                results.append(ProductOutput(
                     row_index=product.row_index,
                     descricao=product.descricao,
                     ean=product.ean,
@@ -166,33 +178,31 @@ async def process_products(
                     subgrupo="",
                     origem="Erro de API",
                     status="Pendente de Revisão",
-                )
-                results.append(output)
+                ))
                 continue
-                
+
             output = layer3_filter(product, llm_result_dict)
-            
+
             if output.status == "Aprovado":
                 metrics.layer2_llm_approved += 1
                 try:
-                    await save_to_history(
-                        product, output.grupo, output.subgrupo,
-                        embedding, "LLM", pool,
-                    )
+                    await save_to_history(product, output.grupo, output.subgrupo, embedding, "LLM", pool)
                 except Exception as e:
-                    logger.warning(f"[Linha {product.row_index}] Erro ao salvar no histórico: {e}")
+                    logger.warning(f"[Linha {product.row_index}] Erro ao salvar histórico: {e}")
             else:
                 metrics.layer2_llm_pending += 1
-                
+
             results.append(output)
-            
-        # Anti-Bloqueio (Rate Limit) após processar o chunk
+
+        # Reportar progresso após cada chunk LLM
+        if on_progress:
+            await on_progress(metrics.resolved, metrics.aprovados, metrics.layer2_llm_pending, metrics.errors)
+
+        # Pausa anti-rate-limit entre chunks LLM
         if i + chunk_size < len(pendentes_llm):
-            logger.info("Aguardando 5 segundos para evitar Rate Limit da API...")
+            logger.info("Aguardando 5s (rate limit LLM)...")
             await asyncio.sleep(5)
 
-    results_sorted = sorted(results, key=lambda r: r.row_index)
     summary = metrics.summary()
     logger.info(f"Processamento concluído. Métricas: {summary}")
-
-    return results_sorted, summary
+    return sorted(results, key=lambda r: r.row_index), summary
