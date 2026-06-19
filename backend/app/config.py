@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # --- Funil ---
     similarity_threshold: float = 0.98
     llm_confidence_threshold: int = 95
-    embedding_batch_size: int = 50
+    embedding_batch_size: int = 10
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 1536
     llm_model: str = "gemini-2.5-flash"
