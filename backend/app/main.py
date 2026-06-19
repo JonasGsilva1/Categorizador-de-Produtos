@@ -71,8 +71,29 @@ from app.middlewares import SecurityHeadersMiddleware, RequestIDMiddleware, Rate
 
 # Ordem dos Middlewares: de fora pra dentro (são executados de baixo pra cima no código)
 # 1. Trusted Host (O mais básico, rejeita hosts inválidos antes de tudo)
-_hosts = [h.strip() for h in _settings.allowed_hosts.split(",") if h.strip()]
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts)
+# O Vercel faz proxy server-side, então o header Host que chega no Railway pode ser:
+#   - o próprio domínio do Railway (requisições diretas)
+#   - o domínio do Vercel (quando o Next.js Route Handler faz fetch para cá)
+# Por isso sempre incluímos ambos. Se ALLOWED_HOSTS=* o middleware aceita qualquer host.
+_raw_hosts = [h.strip() for h in _settings.allowed_hosts.split(",") if h.strip()]
+
+# Garante que domínios essenciais sempre estão presentes, independente da env var
+_essential_hosts = [
+    "localhost",
+    "127.0.0.1",
+    "categorizador-production.up.railway.app",
+    "categorizador-de-produtos.vercel.app",
+    "*.up.railway.app",
+    "*.vercel.app",
+]
+
+if "*" in _raw_hosts:
+    # Se wildcard total, passa direto — permite tudo
+    _allowed_hosts = ["*"]
+else:
+    _allowed_hosts = list(set(_raw_hosts + _essential_hosts))
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
 
 # 2. CORS (Executado depois do Trusted Host)
 
