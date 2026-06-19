@@ -7,8 +7,9 @@ Agora com suporte a background jobs e autenticação.
 import os
 import re
 import uuid
+import asyncio
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
 from app.auth import verify_supabase_token
 from app.database import require_pool
@@ -23,7 +24,6 @@ MAX_FILE_SIZE = 50 * 1024 * 1024
 @router.post("/categorize")
 async def categorize_products(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user_data: dict = Depends(verify_supabase_token)
 ):
@@ -59,8 +59,10 @@ async def categorize_products(
         log_audit_event(user_id, "UPLOAD", safe_filename, client_ip, req_id, "failure", f"DB Error: {str(e)}")
         raise HTTPException(status_code=503, detail=f"Erro de DB: {str(e)}")
     
-    # 3. Inicia o background task
-    background_tasks.add_task(start_job, job_id, file_path, user_id)
+    # 3. Inicia o background task no event loop atual (não via BackgroundTasks,
+    #    pois BackgroundTasks executa corrotinas async em thread separada com novo
+    #    event loop, perdendo acesso ao pool asyncpg do loop principal).
+    asyncio.ensure_future(start_job(job_id, file_path, user_id))
     
     # 4. Auditoria LGPD
     log_audit_event(user_id, "UPLOAD", safe_filename, client_ip, req_id, "success", f"Job ID: {job_id}")
