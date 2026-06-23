@@ -84,7 +84,8 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
             + summary["camada2_llm_aprovado"]
         )
 
-        # 3. Persistir resultados em JSON (para revisão no frontend)
+        # 3. Ordenar e persistir resultados em JSON (para revisão no frontend)
+        results_sorted = sorted(results, key=lambda r: r.row_index)
         results_path_json = os.path.join(settings.temp_storage_path, f"{job_id}_results.json")
         results_data = [r.model_dump() for r in results_sorted]
         with open(results_path_json, "w", encoding="utf-8") as f:
@@ -93,7 +94,6 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
 
         # 4. Gerar XLSX de resultado
         logger.info(f"[Job {job_id[:8]}] Gerando XLSX de resultado...")
-        results_sorted = sorted(results, key=lambda r: r.row_index)
         output_buffer = write_results(results_sorted)
 
         result_path = os.path.join(settings.temp_storage_path, f"{job_id}_result.xlsx")
