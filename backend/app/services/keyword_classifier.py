@@ -62,6 +62,7 @@ _UTENSILIO_TOKENS = {
     "pote", "vasilha", "recipiente", "jarra", "garrafa", "squeeze",
     "copo", "taca", "caneca", "xicara", "bule", "chaleira",
     "molheira", "galheteiro", "porta", "suporte",
+    "pegador", "pinça", "pinca", "servidor", "servico",
     "jogo", "kit", "conjunto", "utensilio", "utensilios",
 }
 
@@ -323,6 +324,9 @@ KEYWORD_RULES: dict[str, Rule] = {
     "espatula de cozinha":  Rule("Bazar e Utilidades", "Utensílios de Cozinha", 2),
     "concha de servir":     Rule("Bazar e Utilidades", "Utensílios de Cozinha", 3),
     "concha":               Rule("Bazar e Utilidades", "Utensílios de Cozinha", 1),
+    "pegador de macarrao":  Rule("Bazar e Utilidades", "Utensílios de Cozinha", 3),
+    "pegador de salada":    Rule("Bazar e Utilidades", "Utensílios de Cozinha", 3),
+    "pegador":              Rule("Bazar e Utilidades", "Utensílios de Cozinha", 1),
     "faca de cozinha":      Rule("Bazar e Utilidades", "Utensílios de Cozinha", 2),
     "tabua de corte":       Rule("Bazar e Utilidades", "Utensílios de Cozinha", 2),
     "colher de pau":        Rule("Bazar e Utilidades", "Utensílios de Cozinha", 2),

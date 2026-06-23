@@ -183,7 +183,7 @@ CREATE POLICY "Allow update access" ON ncm_rules FOR UPDATE USING (true);
 CREATE POLICY "Allow update access" ON product_history FOR UPDATE USING (true);
 
 -- =============================================================
--- JOBS (Processamento Assíncrono)
+-- JOBS (Processamento Assï¿½ncrono)
 -- =============================================================
 
 CREATE TABLE IF NOT EXISTS processing_jobs (
@@ -197,6 +197,7 @@ CREATE TABLE IF NOT EXISTS processing_jobs (
     erros           INT DEFAULT 0,
     file_path       TEXT,
     result_path     TEXT,
+    results_json_path TEXT,
     error_message   TEXT,
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ DEFAULT NOW()
@@ -214,13 +215,13 @@ CREATE TRIGGER trigger_processing_jobs_updated_at
 
 ALTER TABLE processing_jobs ENABLE ROW LEVEL SECURITY;
 
--- Política restrita: O usuário só pode ver e alterar os seus próprios jobs
-CREATE POLICY "Isolamento de Tenant: Ver apenas próprios jobs" ON processing_jobs
+-- Polï¿½tica restrita: O usuï¿½rio sï¿½ pode ver e alterar os seus prï¿½prios jobs
+CREATE POLICY "Isolamento de Tenant: Ver apenas prï¿½prios jobs" ON processing_jobs
 FOR SELECT USING (user_id = auth.uid());
 
-CREATE POLICY "Isolamento de Tenant: Modificar apenas próprios jobs" ON processing_jobs
+CREATE POLICY "Isolamento de Tenant: Modificar apenas prï¿½prios jobs" ON processing_jobs
 FOR UPDATE USING (user_id = auth.uid());
 
-CREATE POLICY "Isolamento de Tenant: Inserir próprios jobs" ON processing_jobs
+CREATE POLICY "Isolamento de Tenant: Inserir prï¿½prios jobs" ON processing_jobs
 FOR INSERT WITH CHECK (user_id = auth.uid());
 

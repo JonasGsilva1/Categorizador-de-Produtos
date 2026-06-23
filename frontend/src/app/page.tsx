@@ -7,6 +7,7 @@ import FileUploader from '../components/FileUploader';
 import ProcessingStatus from '../components/ProcessingStatus';
 import FeedbackUploader from '../components/FeedbackUploader';
 import DebugPanel from '../components/DebugPanel';
+import ReviewPanel from '../components/ReviewPanel';
 import { useDebugLogs } from '@/lib/useDebugLogs';
 import { API_BASE } from '@/lib/api';
 
@@ -25,9 +26,10 @@ export default function Home() {
   const router = useRouter();
   const [session, setSession] = useState<any>(null);
   
-  const [file, setFile] = useState<File | null>(null);
-  const [job, setJob] = useState<JobStatus | null>(null);
+  const [file, setFile]   = useState<File | null>(null);
+  const [job, setJob]     = useState<JobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
 
   const { logs, log, success, warn, error: logError, debug, clear } = useDebugLogs();
 
@@ -249,7 +251,7 @@ export default function Home() {
               <ProcessingStatus status={job.status} total={job.total_rows} processed={job.processed_rows} />
             )}
 
-            {job?.status === 'COMPLETED' && (
+            {job?.status === 'COMPLETED' && !reviewing && (
               <div className="feedback-result" style={{ animation: 'none' }}>
                 <ProcessingStatus status={job.status} total={job.total_rows} processed={job.processed_rows} />
                 
@@ -269,14 +271,34 @@ export default function Home() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
-                  <button className="btn btn-success" style={{ flex: 1 }} onClick={handleDownload}>
-                    ⬇️ Baixar Resultado
-                  </button>
-                  <button className="btn" style={{ flex: 1, background: 'rgba(255,255,255,0.1)', color: '#fff' }} onClick={() => { setJob(null); setFile(null); }}>
+                  {job.pendentes > 0 ? (
+                    <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setReviewing(true)}>
+                      🔍 Revisar {job.pendentes} pendente{job.pendentes > 1 ? 's' : ''} e baixar
+                    </button>
+                  ) : (
+                    <button className="btn btn-success" style={{ flex: 1 }} onClick={handleDownload}>
+                      ⬇️ Baixar Resultado
+                    </button>
+                  )}
+                  <button className="btn" style={{ flex: 1, background: 'rgba(255,255,255,0.1)', color: '#fff' }}
+                    onClick={() => { setJob(null); setFile(null); setReviewing(false); }}>
                     Nova Planilha
                   </button>
                 </div>
               </div>
+            )}
+
+            {job?.status === 'COMPLETED' && reviewing && (
+              <ReviewPanel
+                jobId={job.id}
+                session={session}
+                onBack={() => setReviewing(false)}
+                onFinalized={() => {
+                  setReviewing(false);
+                  success('Revisão finalizada — pronto para download!');
+                  handleDownload();
+                }}
+              />
             )}
 
             {job?.status === 'FAILED' && (

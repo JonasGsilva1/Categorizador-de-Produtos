@@ -1,19 +1,24 @@
 """
-Router: POST /api/categorize e GET /api/jobs/{job_id}
-
-Agora com suporte a background jobs e autenticação.
+Router: POST /api/categorize, GET /api/jobs/{job_id},
+        GET /api/jobs/{job_id}/results, PATCH /api/jobs/{job_id}/results,
+        POST /api/jobs/{job_id}/finalize, GET /api/jobs/{job_id}/download
 """
 
 import os
 import re
 import uuid
+import json
 import asyncio
 import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import Optional
 from app.auth import verify_supabase_token
 from app.database import require_pool
 from app.services.job_manager import create_job, start_job
+from app.models import ProductOutput
+from app.xlsx_io import write_results
 from app.audit import log_audit_event
 
 logger = logging.getLogger(__name__)
@@ -140,3 +145,176 @@ async def download_job_result(job_id: str, request: Request, user_data: dict = D
         filename=f"resultado_categorizacao_{job_id[:8]}.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+
+# ---------------------------------------------------------------------------
+# Modelos para revisão
+# ---------------------------------------------------------------------------
+
+class ReviewItem(BaseModel):
+    row_index: int
+    grupo: str
+    subgrupo: str
+
+
+class ReviewPayload(BaseModel):
+    items: list[ReviewItem]
+
+
+# ---------------------------------------------------------------------------
+# GET /api/jobs/{job_id}/results — retorna todos os resultados (para revisão)
+# ---------------------------------------------------------------------------
+
+@router.get("/jobs/{job_id}/results")
+async def get_job_results(job_id: str, user_data: dict = Depends(verify_supabase_token)):
+    """
+    Retorna a lista completa de produtos categorizados do job.
+    Inclui os pendentes de revisão para que o frontend possa exibi-los.
+    """
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de job_id inválido.")
+
+    user_id = user_data["user_id"]
+    pool = require_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, results_json_path FROM processing_jobs WHERE id = $1 AND user_id = $2",
+            job_id, user_id,
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+    if row["status"] != "COMPLETED":
+        raise HTTPException(status_code=400, detail="Job ainda não concluído.")
+    if not row["results_json_path"] or not os.path.exists(row["results_json_path"]):
+        raise HTTPException(status_code=404, detail="Arquivo de resultados não encontrado.")
+
+    with open(row["results_json_path"], encoding="utf-8") as f:
+        results = json.load(f)
+
+    return {"results": results, "total": len(results)}
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/jobs/{job_id}/results — aplica correções do usuário
+# ---------------------------------------------------------------------------
+
+@router.patch("/jobs/{job_id}/results")
+async def patch_job_results(
+    job_id: str,
+    payload: ReviewPayload,
+    user_data: dict = Depends(verify_supabase_token),
+):
+    """
+    Recebe lista de correções {row_index, grupo, subgrupo} e aplica sobre o JSON
+    de resultados salvo. Não regenera o XLSX ainda — isso é feito em /finalize.
+    """
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de job_id inválido.")
+
+    user_id = user_data["user_id"]
+    pool = require_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, results_json_path FROM processing_jobs WHERE id = $1 AND user_id = $2",
+            job_id, user_id,
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+    if row["status"] != "COMPLETED":
+        raise HTTPException(status_code=400, detail="Job ainda não concluído.")
+    if not row["results_json_path"] or not os.path.exists(row["results_json_path"]):
+        raise HTTPException(status_code=404, detail="Arquivo de resultados não encontrado.")
+
+    with open(row["results_json_path"], encoding="utf-8") as f:
+        results: list[dict] = json.load(f)
+
+    # Índice por row_index para acesso O(1)
+    index = {item["row_index"]: item for item in results}
+    applied = 0
+
+    for correction in payload.items:
+        if correction.row_index in index:
+            index[correction.row_index]["grupo"] = correction.grupo
+            index[correction.row_index]["subgrupo"] = correction.subgrupo
+            index[correction.row_index]["origem"] = "Revisão Manual"
+            index[correction.row_index]["status"] = "Aprovado"
+            applied += 1
+
+    # Salvar JSON atualizado
+    with open(row["results_json_path"], "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False)
+
+    # Atualizar métricas de pendentes no DB
+    pendentes = sum(1 for r in results if r["status"] == "Pendente de Revisão")
+    aprovados = sum(1 for r in results if r["status"] == "Aprovado")
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE processing_jobs SET pendentes = $1, aprovados = $2 WHERE id = $3",
+            pendentes, aprovados, job_id,
+        )
+
+    logger.info(f"[Job {job_id[:8]}] {applied} correções aplicadas. Pendentes restantes: {pendentes}")
+    return {"applied": applied, "pendentes_restantes": pendentes}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/{job_id}/finalize — regenera XLSX com revisões aplicadas
+# ---------------------------------------------------------------------------
+
+@router.post("/jobs/{job_id}/finalize")
+async def finalize_job(
+    job_id: str,
+    request: Request,
+    user_data: dict = Depends(verify_supabase_token),
+):
+    """
+    Regenera o arquivo XLSX final a partir do JSON revisado.
+    Deve ser chamado após todas as correções do usuário estarem aplicadas.
+    """
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de job_id inválido.")
+
+    user_id = user_data["user_id"]
+    req_id = getattr(request.state, "req_id", "unknown")
+    client_ip = request.headers.get("X-Forwarded-For", "127.0.0.1").split(",")[0].strip()
+    pool = require_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, results_json_path, result_path FROM processing_jobs WHERE id = $1 AND user_id = $2",
+            job_id, user_id,
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+    if row["status"] != "COMPLETED":
+        raise HTTPException(status_code=400, detail="Job ainda não concluído.")
+    if not row["results_json_path"] or not os.path.exists(row["results_json_path"]):
+        raise HTTPException(status_code=404, detail="Arquivo de resultados não encontrado.")
+
+    with open(row["results_json_path"], encoding="utf-8") as f:
+        results_raw: list[dict] = json.load(f)
+
+    # Reconstruir ProductOutput e gerar XLSX
+    products = [ProductOutput(**r) for r in results_raw]
+    products_sorted = sorted(products, key=lambda p: p.row_index)
+    output_buffer = write_results(products_sorted)
+
+    # Sobrescrever o XLSX existente
+    result_path = row["result_path"]
+    with open(result_path, "wb") as f:
+        f.write(output_buffer.getbuffer())
+
+    log_audit_event(user_id, "FINALIZE", job_id, client_ip, req_id, "success")
+    logger.info(f"[Job {job_id[:8]}] XLSX finalizado com revisões.")
+    return {"message": "Arquivo finalizado com sucesso.", "pronto_para_download": True}

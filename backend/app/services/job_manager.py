@@ -5,6 +5,7 @@ atualizando a tabela `processing_jobs` no Supabase com o status e as métricas.
 """
 
 import os
+import json
 import logging
 import traceback
 from app.config import get_settings
@@ -83,7 +84,14 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
             + summary["camada2_llm_aprovado"]
         )
 
-        # 3. Gerar XLSX de resultado
+        # 3. Persistir resultados em JSON (para revisão no frontend)
+        results_path_json = os.path.join(settings.temp_storage_path, f"{job_id}_results.json")
+        results_data = [r.model_dump() for r in results_sorted]
+        with open(results_path_json, "w", encoding="utf-8") as f:
+            json.dump(results_data, f, ensure_ascii=False)
+        logger.info(f"[Job {job_id[:8]}] Resultados JSON salvos: {results_path_json}")
+
+        # 4. Gerar XLSX de resultado
         logger.info(f"[Job {job_id[:8]}] Gerando XLSX de resultado...")
         results_sorted = sorted(results, key=lambda r: r.row_index)
         output_buffer = write_results(results_sorted)
@@ -93,16 +101,17 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
             f.write(output_buffer.getbuffer())
         logger.info(f"[Job {job_id[:8]}] XLSX salvo: {result_path}")
 
-        # 4. Marcar como COMPLETED
+        # 5. Marcar como COMPLETED
         async with pool.acquire(timeout=15) as conn:
             await conn.execute(
                 """
                 UPDATE processing_jobs
-                SET status = 'COMPLETED', result_path = $1, processed_rows = $2,
-                    aprovados = $3, pendentes = $4, erros = $5
-                WHERE id = $6
+                SET status = 'COMPLETED', result_path = $1, results_json_path = $2,
+                    processed_rows = $3, aprovados = $4, pendentes = $5, erros = $6
+                WHERE id = $7
                 """,
                 result_path,
+                results_path_json,
                 total_rows,
                 aprovados,
                 summary["camada2_llm_pendente_revisao"],
