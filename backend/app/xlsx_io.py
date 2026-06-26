@@ -6,37 +6,37 @@ Leitura e escrita de arquivos .xlsx via Pandas.
 
 import io
 import pandas as pd
-from app.models import ProductInput, ProductOutput
+from app.models import ProdutoEntrada, ProdutoSaida
 
 
-def read_products(file_bytes: bytes) -> list[ProductInput]:
+def read_products(bytes_arquivo: bytes) -> list[ProdutoEntrada]:
     """
     Lê a planilha .xlsx usando Pandas e extrai os produtos.
-    Espera colunas: Descrição, EAN, NCM (case-insensitive).
-    Retorna lista de ProductInput com o índice da linha.
+    Espera colunas: Descrição, EAN, NCM (insensível a maiúsculas/minúsculas).
+    Retorna lista de ProdutoEntrada com o índice da linha.
     """
-    df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+    df = pd.read_excel(io.BytesIO(bytes_arquivo), engine="openpyxl")
     df.columns = df.columns.astype(str).str.strip().str.lower().str.replace("_", " ")
 
-    header_aliases = {
+    apelidos_cabecalho = {
         "descricao": ["descrição", "descricao", "description", "desc", "produto", "nome"],
         "ean": ["ean", "gtin", "codigo de barras", "código de barras", "cod barras", "barcode"],
         "ncm": ["ncm", "cod ncm", "código ncm"],
     }
     
-    col_map = {}
-    for col in df.columns:
-        for field, aliases in header_aliases.items():
-            if col in aliases and field not in col_map:
-                col_map[col] = field
+    mapa_colunas = {}
+    for coluna in df.columns:
+        for campo, apelidos in apelidos_cabecalho.items():
+            if coluna in apelidos and campo not in mapa_colunas:
+                mapa_colunas[coluna] = campo
                 break
     
-    df = df.rename(columns=col_map)
+    df = df.rename(columns=mapa_colunas)
     
     if "descricao" not in df.columns:
         raise ValueError(
             "Coluna 'Descrição' não encontrada na planilha. "
-            "Colunas aceitas: " + ", ".join(header_aliases["descricao"])
+            "Colunas aceitas: " + ", ".join(apelidos_cabecalho["descricao"])
         )
 
     if "ean" not in df.columns:
@@ -51,29 +51,29 @@ def read_products(file_bytes: bytes) -> list[ProductInput]:
     df["ean"] = df["ean"].apply(lambda x: x[:-2] if x.endswith(".0") else x)
     df["ncm"] = df["ncm"].apply(lambda x: x[:-2] if x.endswith(".0") else x)
     
-    products: list[ProductInput] = []
-    for row_idx, row in df.iterrows():
-        excel_row = int(row_idx) + 2
-        if not row["descricao"]:
+    produtos: list[ProdutoEntrada] = []
+    for indice_linha, linha in df.iterrows():
+        linha_excel = int(indice_linha) + 2
+        if not linha["descricao"]:
             continue
-        products.append(ProductInput(
-            row_index=excel_row,
-            descricao=row["descricao"],
-            ean=row["ean"],
-            ncm=row["ncm"],
+        produtos.append(ProdutoEntrada(
+            row_index=linha_excel,
+            descricao=linha["descricao"],
+            ean=linha["ean"],
+            ncm=linha["ncm"],
         ))
         
-    return products
+    return produtos
 
 
-def read_feedback_products(file_bytes: bytes) -> list[dict]:
+def read_feedback_products(bytes_arquivo: bytes) -> list[dict]:
     """
     Lê a planilha de retroalimentação (corrigida manualmente) via Pandas.
     """
-    df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+    df = pd.read_excel(io.BytesIO(bytes_arquivo), engine="openpyxl")
     df.columns = df.columns.astype(str).str.strip().str.lower().str.replace("_", " ")
 
-    header_aliases = {
+    apelidos_cabecalho = {
         "descricao": ["descrição", "descricao", "description", "desc", "produto", "nome"],
         "ean": ["ean", "gtin", "codigo de barras", "código de barras"],
         "ncm": ["ncm", "cod ncm", "código ncm"],
@@ -81,19 +81,19 @@ def read_feedback_products(file_bytes: bytes) -> list[dict]:
         "subgrupo": ["subgrupo", "subcategoria", "subcategory", "sub grupo"],
     }
     
-    col_map = {}
-    for col in df.columns:
-        for field, aliases in header_aliases.items():
-            if col in aliases and field not in col_map:
-                col_map[col] = field
+    mapa_colunas = {}
+    for coluna in df.columns:
+        for campo, apelidos in apelidos_cabecalho.items():
+            if coluna in apelidos and campo not in mapa_colunas:
+                mapa_colunas[coluna] = campo
                 break
                 
-    df = df.rename(columns=col_map)
+    df = df.rename(columns=mapa_colunas)
     
-    required = ["descricao", "grupo", "subgrupo"]
-    missing = [f for f in required if f not in df.columns]
-    if missing:
-        raise ValueError(f"Colunas obrigatórias não encontradas: {missing}")
+    obrigatorios = ["descricao", "grupo", "subgrupo"]
+    ausentes = [f for f in obrigatorios if f not in df.columns]
+    if ausentes:
+        raise ValueError(f"Colunas obrigatórias não encontradas: {ausentes}")
 
     if "ean" not in df.columns:
         df["ean"] = ""
@@ -116,13 +116,13 @@ def read_feedback_products(file_bytes: bytes) -> list[dict]:
     return df.to_dict("records")
 
 
-def write_results(products: list[ProductOutput]) -> io.BytesIO:
+def write_results(produtos: list[ProdutoSaida]) -> io.BytesIO:
     """
     Gera o .xlsx de resultado via Pandas com formatação xlsxwriter.
     """
-    output = io.BytesIO()
+    saida = io.BytesIO()
     
-    data = [
+    dados = [
         {
             "Descrição": p.descricao,
             "EAN": p.ean,
@@ -132,16 +132,16 @@ def write_results(products: list[ProductOutput]) -> io.BytesIO:
             "Origem da Decisão": p.origem,
             "Status": p.status,
         }
-        for p in products
+        for p in produtos
     ]
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(dados)
     
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name="Resultado", index=False)
-        workbook = writer.book
-        worksheet = writer.sheets["Resultado"]
+    with pd.ExcelWriter(saida, engine="xlsxwriter") as escritor:
+        df.to_excel(escritor, sheet_name="Resultado", index=False)
+        livro_trabalho = escritor.book
+        planilha = escritor.sheets["Resultado"]
         
-        header_fmt = workbook.add_format({
+        fmt_cabecalho = livro_trabalho.add_format({
             "bold": True,
             "bg_color": "#1a1a2e",
             "font_color": "#e0e0ff",
@@ -152,44 +152,44 @@ def write_results(products: list[ProductOutput]) -> io.BytesIO:
             "font_size": 11,
         })
         
-        cell_fmt = workbook.add_format({
+        fmt_celula = livro_trabalho.add_format({
             "border": 1,
             "text_wrap": True,
             "valign": "vcenter",
         })
         
-        approved_fmt = workbook.add_format({
+        fmt_aprovado = livro_trabalho.add_format({
             "bg_color": "#d4edda",
             "font_color": "#155724",
             "border": 1,
         })
         
-        pending_fmt = workbook.add_format({
+        fmt_pendente = livro_trabalho.add_format({
             "bg_color": "#fff3cd",
             "font_color": "#856404",
             "border": 1,
         })
         
-        headers = ["Descrição", "EAN", "NCM", "Grupo", "Subgrupo", "Origem da Decisão", "Status"]
-        col_widths = [50, 16, 12, 20, 25, 22, 20]
+        cabecalhos = ["Descrição", "EAN", "NCM", "Grupo", "Subgrupo", "Origem da Decisão", "Status"]
+        larguras_coluna = [50, 16, 12, 20, 25, 22, 20]
         
-        for col_idx, (header, width) in enumerate(zip(headers, col_widths)):
-            worksheet.set_column(col_idx, col_idx, width)
-            worksheet.write(0, col_idx, header, header_fmt)
+        for indice_coluna, (cabecalho, largura) in enumerate(zip(cabecalhos, larguras_coluna)):
+            planilha.set_column(indice_coluna, indice_coluna, largura)
+            planilha.write(0, indice_coluna, cabecalho, fmt_cabecalho)
             
-        for row_idx, p in enumerate(products, start=1):
-            worksheet.write(row_idx, 0, p.descricao, cell_fmt)
-            worksheet.write(row_idx, 1, p.ean, cell_fmt)
-            worksheet.write(row_idx, 2, p.ncm, cell_fmt)
-            worksheet.write(row_idx, 3, p.grupo, cell_fmt)
-            worksheet.write(row_idx, 4, p.subgrupo, cell_fmt)
-            worksheet.write(row_idx, 5, p.origem, cell_fmt)
+        for indice_linha, p in enumerate(produtos, start=1):
+            planilha.write(indice_linha, 0, p.descricao, fmt_celula)
+            planilha.write(indice_linha, 1, p.ean, fmt_celula)
+            planilha.write(indice_linha, 2, p.ncm, fmt_celula)
+            planilha.write(indice_linha, 3, p.grupo, fmt_celula)
+            planilha.write(indice_linha, 4, p.subgrupo, fmt_celula)
+            planilha.write(indice_linha, 5, p.origem, fmt_celula)
             
-            status_fmt = approved_fmt if p.status == "Aprovado" else pending_fmt
-            worksheet.write(row_idx, 6, p.status, status_fmt)
+            fmt_status = fmt_aprovado if p.status == "Aprovado" else fmt_pendente
+            planilha.write(indice_linha, 6, p.status, fmt_status)
             
-        worksheet.autofilter(0, 0, len(products), len(headers) - 1)
-        worksheet.freeze_panes(1, 0)
+        planilha.autofilter(0, 0, len(produtos), len(cabecalhos) - 1)
+        planilha.freeze_panes(1, 0)
         
-    output.seek(0)
-    return output
+    saida.seek(0)
+    return saida

@@ -14,15 +14,15 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_client: genai.Client | None = None
+_cliente: genai.Client | None = None
 
-def _get_client() -> genai.Client:
+def _obter_cliente() -> genai.Client:
     """Retorna o cliente Gemini (singleton)."""
-    global _client
-    if _client is None:
-        settings = get_settings()
-        _client = genai.Client(api_key=settings.gemini_api_key)
-    return _client
+    global _cliente
+    if _cliente is None:
+        configuracoes = get_settings()
+        _cliente = genai.Client(api_key=configuracoes.gemini_api_key)
+    return _cliente
 
 # =============================================================
 # Modelos Pydantic para Structured Outputs (response_schema)
@@ -67,7 +67,7 @@ OPÇÕES VÁLIDAS DE GRUPOS E SUBGRUPOS:
 - Padaria e Lanchonete: Pães e Salgados, Bolos e Tortas, Refeições Prontas, Lanches Rápidos
 """
 
-def _validate_produto(item: dict, id_linha_esperado: int) -> Optional[ProdutoCategorizado]:
+def _validar_produto(item: dict, id_linha_esperado: int) -> Optional[ProdutoCategorizado]:
     """
     Valida e sanitiza um item individual da resposta do LLM.
     Retorna None se o item for inválido.
@@ -98,24 +98,24 @@ def _validate_produto(item: dict, id_linha_esperado: int) -> Optional[ProdutoCat
             subgrupo=subgrupo,
             grau_de_confianca=confianca,
         )
-    except (ValueError, TypeError) as e:
-        logger.warning(f"Erro de validação no item {id_linha_esperado}: {e}")
+    except (ValueError, TypeError) as erro_validacao:
+        logger.warning(f"Erro de validação no item {id_linha_esperado}: {erro_validacao}")
         return None
 
 
-async def classify_products_batch(products_chunk: list[dict]) -> dict[int, ProdutoCategorizado]:
+async def classify_products_batch(lote_produtos: list[dict]) -> dict[int, ProdutoCategorizado]:
     """
     Classifica um lote de produtos enviando-os de uma vez ao Gemini.
-    `products_chunk` deve ser uma lista de dicionários contendo id_linha, descricao e ncm.
+    `lote_produtos` deve ser uma lista de dicionários contendo id_linha, descricao e ncm.
     Retorna um dicionário mapeando o id_linha para o seu respectivo ProdutoCategorizado.
 
-    Implementa retry com backoff exponencial para erros de rate limiting (429).
+    Implementa tentativa (retry) com backoff exponencial para erros de rate limiting (429).
     """
-    client = _get_client()
+    cliente = _obter_cliente()
 
     # Construir o payload textual dos itens do lote
     itens_texto = []
-    for p in products_chunk:
+    for p in lote_produtos:
         texto = f"ID_LINHA: {p['id_linha']} | Descrição: {p['descricao']}"
         if p.get('ncm'):
             texto += f" | NCM: {p['ncm']}"
@@ -123,7 +123,7 @@ async def classify_products_batch(products_chunk: list[dict]) -> dict[int, Produ
 
     lista_itens_prompt = "\n".join(itens_texto)
 
-    system_prompt = f"""Você é um classificador determinístico de dados de varejo.
+    prompt_sistema = f"""Você é um classificador determinístico de dados de varejo.
 Abaixo está uma lista de produtos para categorizar em lote.
 
 REGRA 1: A Descrição é a ÚNICA fonte da verdade. Ignore o NCM se for industrial ou divergente.
@@ -131,16 +131,16 @@ REGRA 2: Você DEVE classificar escolhendo estritamente entre estas opções:\n{
 Não invente categorias. Se o produto for óbvio e estiver na lista, atribua confiança entre 85 e 100.
 Certifique-se de manter exatamente o mesmo id_linha fornecido para cada produto."""
 
-    # Retry com backoff exponencial para 429
-    max_retries = 3
-    base_delay = 10  # segundos
+    # Tentativas (Retry) com recuo exponencial para 429
+    max_tentativas = 3
+    atraso_base = 10  # segundos
 
-    for attempt in range(1, max_retries + 1):
+    for tentativa in range(1, max_tentativas + 1):
         try:
-            response = await client.aio.models.generate_content(
+            resposta = await cliente.aio.models.generate_content(
                 model="gemini-1.5-flash",
                 contents=[
-                    {"role": "user", "parts": [{"text": f"{system_prompt}\n\nPRODUTOS A CLASSIFICAR:\n{lista_itens_prompt}"}]}
+                    {"role": "user", "parts": [{"text": f"{prompt_sistema}\n\nPRODUTOS A CLASSIFICAR:\n{lista_itens_prompt}"}]}
                 ],
                 config={
                     "response_mime_type": "application/json",
@@ -149,18 +149,18 @@ Certifique-se de manter exatamente o mesmo id_linha fornecido para cada produto.
                 }
             )
 
-            data = json.loads(response.text)
-            produtos_raw = data.get("produtos", [])
+            dados = json.loads(resposta.text)
+            produtos_raw = dados.get("produtos", [])
 
             # Montar o mapeamento com validação individual
             mapeamento: dict[int, ProdutoCategorizado] = {}
             for item in produtos_raw:
-                validado = _validate_produto(item, item.get("id_linha", -1))
+                validado = _validar_produto(item, item.get("id_linha", -1))
                 if validado:
                     mapeamento[validado.id_linha] = validado
 
             # Log de itens ausentes na resposta
-            ids_esperados = {p["id_linha"] for p in products_chunk}
+            ids_esperados = {p["id_linha"] for p in lote_produtos}
             ids_retornados = set(mapeamento.keys())
             ausentes = ids_esperados - ids_retornados
             if ausentes:
@@ -169,52 +169,52 @@ Certifique-se de manter exatamente o mesmo id_linha fornecido para cada produto.
                 )
 
             logger.info(
-                f"Lote processado: {len(mapeamento)}/{len(products_chunk)} itens classificados"
+                f"Lote processado: {len(mapeamento)}/{len(lote_produtos)} itens classificados"
             )
             return mapeamento
 
-        except genai_errors.ClientError as e:
+        except genai_errors.ClientError as erro_cliente:
             # 4xx — inclui 429 Resource Exhausted (rate limit)
-            if attempt < max_retries:
-                delay = base_delay * (2 ** (attempt - 1))  # 10s, 20s, 40s
+            if tentativa < max_tentativas:
+                atraso = atraso_base * (2 ** (tentativa - 1))  # 10s, 20s, 40s
                 logger.warning(
-                    f"Client Error ({e.code}) no Gemini. Tentativa {attempt}/{max_retries}. "
-                    f"Aguardando {delay}s antes de retry..."
+                    f"Erro de Cliente ({erro_cliente.code}) no Gemini. Tentativa {tentativa}/{max_tentativas}. "
+                    f"Aguardando {atraso}s antes de tentar novamente..."
                 )
-                await asyncio.sleep(delay)
+                await asyncio.sleep(atraso)
             else:
                 logger.error(
-                    f"Client Error persistente ({e.code}) após {max_retries} tentativas. "
-                    f"Lote de {len(products_chunk)} itens descartado."
+                    f"Erro de Cliente persistente ({erro_cliente.code}) após {max_tentativas} tentativas. "
+                    f"Lote de {len(lote_produtos)} itens descartado."
                 )
                 return {}
 
-        except genai_errors.ServerError as e:
+        except genai_errors.ServerError as erro_servidor:
             # 5xx — erros internos do servidor
-            logger.error(f"Erro do servidor Gemini ({e.code}): {e}")
-            if attempt < max_retries:
-                delay = base_delay * (2 ** (attempt - 1))
-                logger.info(f"Retry em {delay}s...")
-                await asyncio.sleep(delay)
+            logger.error(f"Erro do servidor Gemini ({erro_servidor.code}): {erro_servidor}")
+            if tentativa < max_tentativas:
+                atraso = atraso_base * (2 ** (tentativa - 1))
+                logger.info(f"Tentando novamente em {atraso}s...")
+                await asyncio.sleep(atraso)
             else:
                 return {}
 
-        except genai_errors.APIError as e:
+        except genai_errors.APIError as erro_api:
             # Outros erros da API (não 4xx nem 5xx)
-            logger.error(f"Erro da API Gemini ({e.code}): {e}")
-            if attempt < max_retries:
-                delay = base_delay * (2 ** (attempt - 1))
-                logger.info(f"Retry em {delay}s...")
-                await asyncio.sleep(delay)
+            logger.error(f"Erro da API Gemini ({erro_api.code}): {erro_api}")
+            if tentativa < max_tentativas:
+                atraso = atraso_base * (2 ** (tentativa - 1))
+                logger.info(f"Tentando novamente em {atraso}s...")
+                await asyncio.sleep(atraso)
             else:
                 return {}
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Resposta do Gemini não é JSON válido: {e}")
+        except json.JSONDecodeError as erro_json:
+            logger.error(f"Resposta do Gemini não é JSON válido: {erro_json}")
             return {}
 
-        except Exception as e:
-            logger.error(f"Erro inesperado ao classificar lote no Gemini: {e}", exc_info=True)
+        except Exception as excecao_inesperada:
+            logger.error(f"Erro inesperado ao classificar lote no Gemini: {excecao_inesperada}", exc_info=True)
             return {}
 
     return {}  # Fallback (não deveria chegar aqui)

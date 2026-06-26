@@ -12,63 +12,71 @@ export interface LogEntry {
   detail?: string;
 }
 
-interface DebugPanelProps {
+interface PropsPainelDebug {
   logs: LogEntry[];
   onClear: () => void;
 }
 
-const LEVEL_CONFIG: Record<LogLevel, { icon: string; color: string; bg: string }> = {
-  info:    { icon: 'ℹ',  color: '#a0c4ff', bg: 'rgba(100, 160, 255, 0.08)' },
-  success: { icon: '✓',  color: '#43e97b', bg: 'rgba(67, 233, 123, 0.08)'  },
-  warning: { icon: '⚠',  color: '#f6d365', bg: 'rgba(246, 211, 101, 0.08)' },
-  error:   { icon: '✕',  color: '#f5576c', bg: 'rgba(245, 87, 108, 0.08)'  },
-  debug:   { icon: '⬡',  color: '#c084fc', bg: 'rgba(192, 132, 252, 0.08)' },
+const ROTULOS_NIVEL: Record<LogLevel, string> = {
+  info:    'Info',
+  success: 'Sucesso',
+  warning: 'Aviso',
+  error:   'Erro',
+  debug:   'Debug',
 };
 
-export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState<LogLevel | 'all'>('all');
-  const [autoScroll, setAutoScroll] = useState(true);
-  const listRef = useRef<HTMLDivElement>(null);
-  const prevLenRef = useRef(0);
+const CONFIGURACAO_NIVEL: Record<LogLevel, { icone: string; cor: string; fundo: string }> = {
+  info:    { icone: 'ℹ',  cor: '#a0c4ff', fundo: 'rgba(100, 160, 255, 0.08)' },
+  success: { icone: '✓',  cor: '#43e97b', fundo: 'rgba(67, 233, 123, 0.08)'  },
+  warning: { icone: '⚠',  cor: '#f6d365', fundo: 'rgba(246, 211, 101, 0.08)' },
+  error:   { icone: '✕',  cor: '#f5576c', fundo: 'rgba(245, 87, 108, 0.08)'  },
+  debug:   { icone: '⬡',  cor: '#c084fc', fundo: 'rgba(192, 132, 252, 0.08)' },
+};
+
+export default function DebugPanel({ logs, onClear }: PropsPainelDebug) {
+  const [aberto, setAberto] = useState(false);
+  const [filtro, setFiltro] = useState<LogLevel | 'todos'>('todos');
+  const [autoRolagem, setAutoRolagem] = useState(true);
+  const refLista = useRef<HTMLDivElement>(null);
+  const refTamanhoAnterior = useRef(0);
 
   // Auto-scroll quando novos logs chegam
   useEffect(() => {
-    if (autoScroll && open && logs.length !== prevLenRef.current) {
-      listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+    if (autoRolagem && aberto && logs.length !== refTamanhoAnterior.current) {
+      refLista.current?.scrollTo({ top: refLista.current.scrollHeight, behavior: 'smooth' });
     }
-    prevLenRef.current = logs.length;
-  }, [logs, autoScroll, open]);
+    refTamanhoAnterior.current = logs.length;
+  }, [logs, autoRolagem, aberto]);
 
-  const filtered = filter === 'all' ? logs : logs.filter(l => l.level === filter);
+  const logsFiltrados = filtro === 'todos' ? logs : logs.filter(l => l.level === filtro);
 
-  const counts = logs.reduce((acc, l) => {
+  const contadores = logs.reduce((acc, l) => {
     acc[l.level] = (acc[l.level] ?? 0) + 1;
     return acc;
   }, {} as Record<string, number>);
 
-  const hasErrors   = (counts.error   ?? 0) > 0;
-  const hasWarnings = (counts.warning ?? 0) > 0;
+  const temErros  = (contadores.error   ?? 0) > 0;
+  const temAvisos = (contadores.warning ?? 0) > 0;
 
-  const badgeColor = hasErrors
+  const corBadge = temErros
     ? '#f5576c'
-    : hasWarnings
+    : temAvisos
     ? '#f6d365'
     : '#43e97b';
 
-  const handleCopyAll = useCallback(() => {
-    const text = logs
+  const copiarTodos = useCallback(() => {
+    const texto = logs
       .map(l => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}${l.detail ? ' — ' + l.detail : ''}`)
       .join('\n');
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard.writeText(texto).catch(() => {});
   }, [logs]);
 
   return (
     <div style={{ position: 'fixed', bottom: '1.5rem', right: '1.5rem', zIndex: 9999 }}>
       {/* Botão flutuante */}
-      {!open && (
+      {!aberto && (
         <button
-          onClick={() => setOpen(true)}
+          onClick={() => setAberto(true)}
           title="Abrir painel de logs"
           style={{
             display: 'flex',
@@ -87,7 +95,7 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
             transition: 'all 200ms ease',
             fontFamily: 'inherit',
           }}
-          onMouseEnter={e => (e.currentTarget.style.borderColor = badgeColor)}
+          onMouseEnter={e => (e.currentTarget.style.borderColor = corBadge)}
           onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)')}
         >
           <span style={{ fontSize: '1rem' }}>🖥</span>
@@ -95,8 +103,8 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
           {logs.length > 0 && (
             <span style={{
               padding: '0.1rem 0.45rem',
-              background: badgeColor,
-              color: hasErrors || hasWarnings ? '#0a0a1a' : '#0a0a1a',
+              background: corBadge,
+              color: temErros || temAvisos ? '#0a0a1a' : '#0a0a1a',
               borderRadius: '9999px',
               fontSize: '0.7rem',
               fontWeight: 700,
@@ -110,7 +118,7 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
       )}
 
       {/* Painel expandido */}
-      {open && (
+      {aberto && (
         <div style={{
           width: 'min(520px, calc(100vw - 2rem))',
           height: '420px',
@@ -125,7 +133,7 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
           animation: 'fadeSlideUp 0.2s ease-out',
           fontFamily: 'inherit',
         }}>
-          {/* Header */}
+          {/* Cabeçalho */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -142,40 +150,46 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
 
             {/* Filtros de nível */}
             <div style={{ display: 'flex', gap: '0.25rem' }}>
-              {(['all', 'info', 'success', 'warning', 'error', 'debug'] as const).map(lvl => (
-                <button
-                  key={lvl}
-                  onClick={() => setFilter(lvl)}
-                  title={lvl === 'all' ? 'Todos' : lvl}
-                  style={{
-                    padding: '0.2rem 0.45rem',
-                    fontSize: '0.65rem',
-                    fontWeight: 600,
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
-                    background: filter === lvl
-                      ? (lvl === 'all' ? 'rgba(255,255,255,0.15)' : LEVEL_CONFIG[lvl].bg)
-                      : 'transparent',
-                    color: filter === lvl
-                      ? (lvl === 'all' ? '#e8e8f0' : LEVEL_CONFIG[lvl].color)
-                      : 'rgba(255,255,255,0.35)',
-                    transition: 'all 150ms',
-                  }}
-                >
-                  {lvl === 'all' ? `Todos (${logs.length})` : `${lvl}${counts[lvl] ? ` (${counts[lvl]})` : ''}`}
-                </button>
-              ))}
+              {(['todos', 'info', 'success', 'warning', 'error', 'debug'] as const).map(lvl => {
+                const ehNivel = lvl !== 'todos';
+                const nivelConfig = ehNivel ? CONFIGURACAO_NIVEL[lvl] : null;
+                const rotulo = lvl === 'todos' ? `Todos (${logs.length})` : `${ROTULOS_NIVEL[lvl]}${contadores[lvl] ? ` (${contadores[lvl]})` : ''}`;
+
+                return (
+                  <button
+                    key={lvl}
+                    onClick={() => setFiltro(lvl)}
+                    title={lvl === 'todos' ? 'Todos' : ROTULOS_NIVEL[lvl]}
+                    style={{
+                      padding: '0.2rem 0.45rem',
+                      fontSize: '0.65rem',
+                      fontWeight: 600,
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      background: filtro === lvl
+                        ? (lvl === 'todos' ? 'rgba(255,255,255,0.15)' : nivelConfig!.fundo)
+                        : 'transparent',
+                      color: filtro === lvl
+                        ? (lvl === 'todos' ? '#e8e8f0' : nivelConfig!.cor)
+                        : 'rgba(255,255,255,0.35)',
+                      transition: 'all 150ms',
+                    }}
+                  >
+                    {rotulo}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Ações */}
             <div style={{ display: 'flex', gap: '0.25rem', marginLeft: '0.25rem' }}>
               <button
-                onClick={() => setAutoScroll(s => !s)}
-                title={autoScroll ? 'Desativar auto-scroll' : 'Ativar auto-scroll'}
+                onClick={() => setAutoRolagem(s => !s)}
+                title={autoRolagem ? 'Desativar auto-rolagem' : 'Ativar auto-rolagem'}
                 style={{
                   padding: '0.25rem 0.45rem',
                   fontSize: '0.7rem',
@@ -183,15 +197,15 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
                   borderRadius: '4px',
                   cursor: 'pointer',
                   fontFamily: 'inherit',
-                  background: autoScroll ? 'rgba(102,126,234,0.25)' : 'transparent',
-                  color: autoScroll ? '#a78bfa' : 'rgba(255,255,255,0.3)',
+                  background: autoRolagem ? 'rgba(102,126,234,0.25)' : 'transparent',
+                  color: autoRolagem ? '#a78bfa' : 'rgba(255,255,255,0.3)',
                   transition: 'all 150ms',
                 }}
               >
                 ⇓
               </button>
               <button
-                onClick={handleCopyAll}
+                onClick={copiarTodos}
                 title="Copiar todos os logs"
                 style={{
                   padding: '0.25rem 0.45rem',
@@ -229,7 +243,7 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
                 ✕ limpar
               </button>
               <button
-                onClick={() => setOpen(false)}
+                onClick={() => setAberto(false)}
                 title="Minimizar"
                 style={{
                   padding: '0.25rem 0.45rem',
@@ -252,11 +266,11 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
 
           {/* Lista de logs */}
           <div
-            ref={listRef}
+            ref={refLista}
             onScroll={e => {
               const el = e.currentTarget;
-              const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-              setAutoScroll(atBottom);
+              const noFinal = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+              setAutoRolagem(noFinal);
             }}
             style={{
               flex: 1,
@@ -266,7 +280,7 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
               scrollbarColor: 'rgba(255,255,255,0.1) transparent',
             }}
           >
-            {filtered.length === 0 ? (
+            {logsFiltrados.length === 0 ? (
               <div style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -278,14 +292,14 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
                 gap: '0.5rem',
               }}>
                 <span style={{ fontSize: '1.5rem', opacity: 0.4 }}>📭</span>
-                Nenhum log{filter !== 'all' ? ` de nível "${filter}"` : ''}
+                Nenhum log{filtro !== 'todos' ? ` de nível "${ROTULOS_NIVEL[filtro]}"` : ''}
               </div>
             ) : (
-              filtered.map(entry => {
-                const cfg = LEVEL_CONFIG[entry.level];
+              logsFiltrados.map(entrada => {
+                const cfg = CONFIGURACAO_NIVEL[entrada.level];
                 return (
                   <div
-                    key={entry.id}
+                    key={entrada.id}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: 'auto auto 1fr',
@@ -298,21 +312,21 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
                       transition: 'background 100ms',
                     }}
                     onMouseEnter={e => {
-                      (e.currentTarget as HTMLDivElement).style.background = cfg.bg;
-                      (e.currentTarget as HTMLDivElement).style.borderLeftColor = cfg.color;
+                      (e.currentTarget as HTMLDivElement).style.background = cfg.fundo;
+                      (e.currentTarget as HTMLDivElement).style.borderLeftColor = cfg.cor;
                     }}
                     onMouseLeave={e => {
                       (e.currentTarget as HTMLDivElement).style.background = 'transparent';
                       (e.currentTarget as HTMLDivElement).style.borderLeftColor = 'transparent';
                     }}
                   >
-                    {/* Timestamp */}
+                    {/* Marca de tempo */}
                     <span style={{ color: 'rgba(255,255,255,0.25)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>
-                      {entry.timestamp}
+                      {entrada.timestamp}
                     </span>
-                    {/* Badge nível */}
+                    {/* Badge do nível */}
                     <span style={{
-                      color: cfg.color,
+                      color: cfg.cor,
                       fontWeight: 700,
                       fontSize: '0.65rem',
                       textTransform: 'uppercase',
@@ -320,14 +334,14 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
                       whiteSpace: 'nowrap',
                       minWidth: '3.5rem',
                     }}>
-                      {cfg.icon} {entry.level}
+                      {cfg.icone} {ROTULOS_NIVEL[entrada.level]}
                     </span>
                     {/* Mensagem */}
                     <span style={{ color: '#d0d0e8', wordBreak: 'break-word' }}>
-                      {entry.message}
-                      {entry.detail && (
+                      {entrada.message}
+                      {entrada.detail && (
                         <span style={{ color: 'rgba(255,255,255,0.35)', marginLeft: '0.4rem' }}>
-                          — {entry.detail}
+                          — {entrada.detail}
                         </span>
                       )}
                     </span>
@@ -337,7 +351,7 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
             )}
           </div>
 
-          {/* Footer */}
+          {/* Rodapé */}
           <div style={{
             padding: '0.35rem 0.875rem',
             borderTop: '1px solid rgba(255,255,255,0.06)',
@@ -348,14 +362,14 @@ export default function DebugPanel({ logs, onClear }: DebugPanelProps) {
             background: 'rgba(255,255,255,0.02)',
           }}>
             <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.2)' }}>
-              {filtered.length} entrada{filtered.length !== 1 ? 's' : ''}
-              {filter !== 'all' ? ` (filtrado: ${filter})` : ''}
+              {logsFiltrados.length} entrada{logsFiltrados.length !== 1 ? 's' : ''}
+              {filtro !== 'todos' ? ` (filtrado: ${ROTULOS_NIVEL[filtro]})` : ''}
             </span>
             <span style={{
               fontSize: '0.65rem',
-              color: autoScroll ? '#a78bfa' : 'rgba(255,255,255,0.2)',
+              color: autoRolagem ? '#a78bfa' : 'rgba(255,255,255,0.2)',
             }}>
-              {autoScroll ? '⇓ auto-scroll ativo' : '⇓ auto-scroll pausado'}
+              {autoRolagem ? '⇓ auto-rolagem ativa' : '⇓ auto-rolagem pausada'}
             </span>
           </div>
         </div>

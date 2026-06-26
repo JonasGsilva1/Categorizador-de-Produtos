@@ -15,13 +15,13 @@ logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     """Configurações da aplicação carregadas de variáveis de ambiente."""
 
-    # --- Database ---
+    # --- Banco de Dados ---
     database_url: str
 
-    # --- AI Providers (Gemini) ---
+    # --- Provedores de IA (Gemini) ---
     gemini_api_key: str
 
-    # --- Auth ---
+    # --- Autenticação ---
     supabase_jwt_secret: str = ""
     supabase_url: str = ""
 
@@ -36,13 +36,13 @@ class Settings(BaseSettings):
     # --- CORS ---
     frontend_url: str = "http://localhost:3000"
 
-    # --- Server ---
+    # --- Servidor ---
     port: int = 8000
 
-    # --- Storage ---
+    # --- Armazenamento ---
     temp_storage_path: str = "/tmp"
 
-    # --- Security ---
+    # --- Segurança ---
     environment: str = "development"  # "production" em Railway
     rate_limit_per_minute: int = 60   # Requests gerais por IP
     upload_rate_limit_per_minute: int = 5  # Uploads por IP
@@ -57,18 +57,18 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Retorna instância cacheada das configurações."""
+    """Retorna instância em cache das configurações."""
     try:
         return Settings()
-    except ValidationError as exc:
-        missing = [
-            ".".join(str(part) for part in err.get("loc", ()))
-            for err in exc.errors()
-            if err.get("type") == "missing"
+    except ValidationError as excecao:
+        ausentes = [
+            ".".join(str(part) for part in erro.get("loc", ()))
+            for erro in excecao.errors()
+            if erro.get("type") == "missing"
         ]
-        if missing:
+        if ausentes:
             logger.error(
                 "Variáveis de ambiente obrigatórias ausentes no Railway: %s",
-                ", ".join(missing),
+                ", ".join(ausentes),
             )
         raise

@@ -12,7 +12,7 @@ import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from app.auth import verify_supabase_token
 from app.database import require_pool
-from app.models import FeedbackResponse
+from app.models import RespostaRetroalimentacao
 from app.xlsx_io import read_feedback_products
 from app.services.tfidf_matcher import load_index
 from app.audit import log_audit_event
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["Retroalimentação"])
 
 
-@router.post("/feedback", response_model=FeedbackResponse)
+@router.post("/feedback", response_model=RespostaRetroalimentacao)
 async def submit_feedback(
     request: Request,
     file: UploadFile = File(...),
@@ -37,9 +37,9 @@ async def submit_feedback(
     Após persistir os dados, força a recarga do índice TF-IDF em memória
     para que as próximas categorizações reflitam imediatamente os novos registros.
     """
-    user_id = user_data["user_id"]
-    req_id = getattr(request.state, "req_id", "unknown")
-    client_ip = (
+    id_usuario = user_data["user_id"]
+    id_requisicao = getattr(request.state, "req_id", "unknown")
+    ip_cliente = (
         request.headers.get("X-Forwarded-For", request.client.host if request.client else "127.0.0.1")
         .split(",")[0]
         .strip()
@@ -49,21 +49,21 @@ async def submit_feedback(
         raise HTTPException(status_code=400, detail="Arquivo inválido.")
 
     # --- Validação e Sanitização ---
-    safe_filename = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", file.filename)
-    if not safe_filename.lower().endswith((".xlsx", ".xls")):
-        log_audit_event(user_id, "FEEDBACK", safe_filename, client_ip, req_id, "failure", "Extensão inválida")
+    nome_arquivo_seguro = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", file.filename)
+    if not nome_arquivo_seguro.lower().endswith((".xlsx", ".xls")):
+        log_audit_event(id_usuario, "FEEDBACK", nome_arquivo_seguro, ip_cliente, id_requisicao, "failure", "Extensão inválida")
         raise HTTPException(
             status_code=400,
             detail="Formato inválido. Envie um arquivo .xlsx.",
         )
 
-    file_bytes = await file.read()
-    if len(file_bytes) == 0:
+    bytes_arquivo = await file.read()
+    if len(bytes_arquivo) == 0:
         raise HTTPException(status_code=400, detail="Arquivo vazio.")
 
     # Validação Anti-Malware (Magic Bytes)
-    if len(file_bytes) < 4 or not file_bytes.startswith(b"PK\x03\x04"):
-        log_audit_event(user_id, "FEEDBACK", safe_filename, client_ip, req_id, "failure", "Falha de Magic Bytes")
+    if len(bytes_arquivo) < 4 or not bytes_arquivo.startswith(b"PK\x03\x04"):
+        log_audit_event(id_usuario, "FEEDBACK", nome_arquivo_seguro, ip_cliente, id_requisicao, "failure", "Falha de Magic Bytes")
         raise HTTPException(
             status_code=415,
             detail="Arquivo corrompido ou malicioso. Apenas formatos XLSX reais são permitidos.",
@@ -71,41 +71,41 @@ async def submit_feedback(
 
     # --- Leitura da planilha ---
     try:
-        rows = read_feedback_products(file_bytes)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Erro ao ler planilha de feedback: {e}", exc_info=True)
+        linhas = read_feedback_products(bytes_arquivo)
+    except ValueError as erro_valor:
+        raise HTTPException(status_code=400, detail=str(erro_valor))
+    except Exception as excecao:
+        logger.error(f"Erro ao ler planilha de feedback: {excecao}", exc_info=True)
         raise HTTPException(
             status_code=400,
             detail="Erro ao ler o arquivo. Verifique se é um .xlsx válido com as colunas corretas.",
         )
 
-    if not rows:
+    if not linhas:
         raise HTTPException(
             status_code=400,
             detail="Nenhuma linha válida encontrada. Preencha Descrição, Grupo e Subgrupo.",
         )
 
-    logger.info(f"Feedback recebido: '{file.filename}' com {len(rows)} linhas válidas")
+    logger.info(f"Feedback recebido: '{file.filename}' com {len(linhas)} linhas válidas")
 
     # --- Pool de DB ---
     try:
-        pool = require_pool()
+        pool_db = require_pool()
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Erro de DB: {str(e)}")
+    except Exception as excecao:
+        raise HTTPException(status_code=503, detail=f"Erro de DB: {str(excecao)}")
 
-    inserted = 0
-    updated = 0
-    errors = 0
+    inseridos = 0
+    atualizados = 0
+    erros = 0
 
-    for row in rows:
+    for linha in linhas:
         try:
-            async with pool.acquire() as conn:
+            async with pool_db.acquire() as conexao:
                 # Upsert no product_history — embedding salvo como vetor nulo (não usado pelo TF-IDF)
-                result = await conn.execute(
+                resultado = await conexao.execute(
                     """
                     INSERT INTO product_history (descricao, ean, ncm, grupo, subgrupo, origem)
                     VALUES ($1, $2, $3, $4, $5, 'Retroalimentação')
@@ -118,47 +118,47 @@ async def submit_feedback(
                         origem    = 'Retroalimentação',
                         updated_at = NOW()
                     """,
-                    row["descricao"],
-                    row["ean"],
-                    row["ncm"],
-                    row["grupo"],
-                    row["subgrupo"],
+                    linha["descricao"],
+                    linha["ean"],
+                    linha["ncm"],
+                    linha["grupo"],
+                    linha["subgrupo"],
                 )
 
-            if "INSERT" in result:
-                inserted += 1
+            if "INSERT" in resultado:
+                inseridos += 1
             else:
-                updated += 1
+                atualizados += 1
 
-        except Exception as e:
+        except Exception as excecao:
             logger.error(
-                f"Erro ao processar feedback para '{row['descricao'][:50]}': {e}",
+                f"Erro ao processar feedback para '{linha['descricao'][:50]}': {excecao}",
                 exc_info=True,
             )
-            errors += 1
+            erros += 1
 
     logger.info(
-        f"Feedback processado: {inserted} inseridos, {updated} atualizados, {errors} erros"
+        f"Feedback processado: {inseridos} inseridos, {atualizados} atualizados, {erros} erros"
     )
 
     # --- Invalidar cache TF-IDF para refletir os novos dados ---
-    if inserted > 0 or updated > 0:
+    if inseridos > 0 or atualizados > 0:
         try:
-            await load_index(pool, force=True)
+            await load_index(pool_db, forcar=True)
             logger.info("Índice TF-IDF recarregado após retroalimentação.")
-        except Exception as e:
+        except Exception as excecao:
             # Não bloqueia a resposta — o cache expirará automaticamente pelo TTL
-            logger.warning(f"Não foi possível recarregar o índice TF-IDF: {e}")
+            logger.warning(f"Não foi possível recarregar o índice TF-IDF: {excecao}")
 
     log_audit_event(
-        user_id, "FEEDBACK", safe_filename, client_ip, req_id,
-        "success", f"In:{inserted} Up:{updated} Err:{errors}"
+        id_usuario, "FEEDBACK", nome_arquivo_seguro, ip_cliente, id_requisicao,
+        "success", f"In:{inseridos} Up:{atualizados} Err:{erros}"
     )
 
-    return FeedbackResponse(
+    return RespostaRetroalimentacao(
         message="Retroalimentação processada com sucesso.",
-        inserted=inserted,
-        updated=updated,
-        errors=errors,
-        total=len(rows),
+        inserted=inseridos,
+        updated=atualizados,
+        errors=erros,
+        total=len(linhas),
     )

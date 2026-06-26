@@ -34,10 +34,10 @@ def _needs_ssl(dsn: str) -> bool:
 async def create_pool() -> asyncpg.Pool:
     """Cria o pool de conexões com o PostgreSQL/Supabase."""
     global _pool
-    settings = get_settings()
-    dsn = _normalize_dsn(settings.database_url)
+    configuracoes = get_settings()
+    dsn = _normalize_dsn(configuracoes.database_url)
 
-    connect_kwargs: dict = {
+    args_conexao: dict = {
         "dsn": dsn,
         "min_size": 1,
         "max_size": 10,
@@ -46,21 +46,21 @@ async def create_pool() -> asyncpg.Pool:
     }
 
     if _needs_ssl(dsn):
-        ssl_ctx = ssl.create_default_context()
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
-        connect_kwargs["ssl"] = ssl_ctx
+        ctx_ssl = ssl.create_default_context()
+        ctx_ssl.check_hostname = False
+        ctx_ssl.verify_mode = ssl.CERT_NONE
+        args_conexao["ssl"] = ctx_ssl
 
     logger.info("Conectando ao PostgreSQL...")
-    _pool = await asyncpg.create_pool(**connect_kwargs)
+    _pool = await asyncpg.create_pool(**args_conexao)
 
     try:
-        async with _pool.acquire() as conn:
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    except Exception as exc:
+        async with _pool.acquire() as conexao:
+            await conexao.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    except Exception as excecao:
         logger.warning(
             "Extensão vector não pôde ser criada (habilite no painel Supabase): %s",
-            exc,
+            excecao,
         )
 
     logger.info("Pool PostgreSQL pronto.")
@@ -90,8 +90,8 @@ def require_pool() -> asyncpg.Pool:
     """Retorna o pool ou HTTP 503 com mensagem clara."""
     try:
         return get_pool()
-    except RuntimeError as e:
+    except RuntimeError as erro_runtime:
         raise HTTPException(
             status_code=503,
-            detail=f"Erro de DB: {str(e)}",
+            detail=f"Erro de DB: {str(erro_runtime)}",
         )

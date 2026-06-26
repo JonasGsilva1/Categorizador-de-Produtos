@@ -1,37 +1,37 @@
 import { useState, useCallback, useRef } from 'react';
 import type { LogEntry, LogLevel } from '@/components/DebugPanel';
 
-const MAX_LOGS = 200;
+const MAX_REGISTROS = 200;
 
 export function useDebugLogs() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const counterRef = useRef(0);
+  const contadorRef = useRef(0);
 
-  const addLog = useCallback((level: LogLevel, message: string, detail?: string) => {
-    const now = new Date();
-    const timestamp = now.toLocaleTimeString('pt-BR', {
+  const adicionarLog = useCallback((nivel: LogLevel, mensagem: string, detalhe?: string) => {
+    const agora = new Date();
+    const marcaTempo = agora.toLocaleTimeString('pt-BR', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
     });
-    const entry: LogEntry = {
-      id: ++counterRef.current,
-      timestamp,
-      level,
-      message,
-      detail,
+    const entrada: LogEntry = {
+      id: ++contadorRef.current,
+      timestamp: marcaTempo,
+      level: nivel,
+      message: mensagem,
+      detail: detalhe,
     };
-    setLogs(prev => {
-      const next = [...prev, entry];
-      return next.length > MAX_LOGS ? next.slice(next.length - MAX_LOGS) : next;
+    setLogs(anterior => {
+      const proximo = [...anterior, entrada];
+      return proximo.length > MAX_REGISTROS ? proximo.slice(proximo.length - MAX_REGISTROS) : proximo;
     });
   }, []);
 
-  const log     = useCallback((msg: string, detail?: string) => addLog('info',    msg, detail), [addLog]);
-  const success = useCallback((msg: string, detail?: string) => addLog('success', msg, detail), [addLog]);
-  const warn    = useCallback((msg: string, detail?: string) => addLog('warning', msg, detail), [addLog]);
-  const error   = useCallback((msg: string, detail?: string) => addLog('error',   msg, detail), [addLog]);
-  const debug   = useCallback((msg: string, detail?: string) => addLog('debug',   msg, detail), [addLog]);
+  const log     = useCallback((msg: string, detalhe?: string) => adicionarLog('info',    msg, detalhe), [adicionarLog]);
+  const success = useCallback((msg: string, detalhe?: string) => adicionarLog('success', msg, detalhe), [adicionarLog]);
+  const warn    = useCallback((msg: string, detalhe?: string) => adicionarLog('warning', msg, detalhe), [adicionarLog]);
+  const error   = useCallback((msg: string, detalhe?: string) => adicionarLog('error',   msg, detalhe), [adicionarLog]);
+  const debug   = useCallback((msg: string, detalhe?: string) => adicionarLog('debug',   msg, detalhe), [adicionarLog]);
   const clear   = useCallback(() => setLogs([]), []);
 
   return { logs, log, success, warn, error, debug, clear };

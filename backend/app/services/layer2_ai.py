@@ -8,28 +8,28 @@ Camada 2 do Funil: Inteligência Artificial.
 
 import logging
 import asyncpg
-from app.models import ProductInput, VectorMatch, LLMClassification
+from app.models import ProdutoEntrada, ResultadoBuscaVetorial, ClassificacaoLLM
 from app.services.embedding import generate_embedding
 from app.services.llm import classify_products_batch
 
 logger = logging.getLogger(__name__)
 
 
-async def vector_search(
+async def busca_vetorial(
     embedding: list[float],
-    pool: asyncpg.Pool,
-    threshold: float = 0.98,
-) -> VectorMatch | None:
+    pool_db: asyncpg.Pool,
+    limite: float = 0.98,
+) -> ResultadoBuscaVetorial | None:
     """
     Executa busca por similaridade de cosseno no pgvector ignorando NCM.
     
     Returns:
-        VectorMatch se similaridade >= 0.98, None caso contrário.
+        ResultadoBuscaVetorial se similaridade >= limite, None caso contrário.
     """
     embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
 
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
+    async with pool_db.acquire() as conexao:
+        linha = await conexao.fetchrow(
             """
             SELECT 
                 id,
@@ -43,33 +43,33 @@ async def vector_search(
             LIMIT 1
             """,
             embedding_str,
-            threshold,
+            limite,
         )
 
-    if row:
-        match = VectorMatch(
-            id=row["id"],
-            descricao=row["descricao"],
-            grupo=row["grupo"],
-            subgrupo=row["subgrupo"],
-            similarity=float(row["similarity"]),
+    if linha:
+        correspondencia = ResultadoBuscaVetorial(
+            id=linha["id"],
+            descricao=linha["descricao"],
+            grupo=linha["grupo"],
+            subgrupo=linha["subgrupo"],
+            similarity=float(linha["similarity"]),
         )
         logger.debug(
-            f"Vector match encontrado: sim={match.similarity:.4f} → "
-            f"{match.grupo}/{match.subgrupo} (ref: '{match.descricao[:50]}...')"
+            f"Correspondência de vetor encontrada: sim={correspondencia.similarity:.4f} → "
+            f"{correspondencia.grupo}/{correspondencia.subgrupo} (ref: '{correspondencia.descricao[:50]}...')"
         )
-        return match
+        return correspondencia
 
     return None
 
 
-async def save_to_history(
-    product: ProductInput,
+async def salvar_no_historico(
+    produto: ProdutoEntrada,
     grupo: str,
     subgrupo: str,
     embedding: list[float],
     origem: str,
-    pool: asyncpg.Pool,
+    pool_db: asyncpg.Pool,
 ) -> None:
     """
     Salva o produto categorizado no histórico com embedding para aprendizado futuro.
@@ -77,8 +77,8 @@ async def save_to_history(
     """
     embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
 
-    async with pool.acquire() as conn:
-        await conn.execute(
+    async with pool_db.acquire() as conexao:
+        await conexao.execute(
             """
             INSERT INTO product_history (descricao, ean, ncm, grupo, subgrupo, embedding, origem)
             VALUES ($1, $2, $3, $4, $5, $6::vector, $7)
@@ -90,9 +90,9 @@ async def save_to_history(
                 origem = EXCLUDED.origem,
                 updated_at = NOW()
             """,
-            product.descricao,
-            product.ean,
-            product.ncm,
+            produto.descricao,
+            produto.ean,
+            produto.ncm,
             grupo,
             subgrupo,
             embedding_str,
@@ -101,20 +101,20 @@ async def save_to_history(
 
 
 async def layer2_ai(
-    product: ProductInput,
-    pool: asyncpg.Pool,
-) -> tuple[list[float], VectorMatch | None, LLMClassification | None]:
+    produto: ProdutoEntrada,
+    pool_db: asyncpg.Pool,
+) -> tuple[list[float], ResultadoBuscaVetorial | None, ClassificacaoLLM | None]:
     """
     Executa a Camada 2 do funil:
     1. Gera embedding da descrição
     2. Busca vetorial no histórico
     3. Se não encontrou, classifica via LLM
     """
-    embedding = await generate_embedding(product.descricao)
+    embedding = await generate_embedding(produto.descricao)
 
-    match = await vector_search(embedding, pool, threshold=0.98)
-    if match:
-        return embedding, match, None
+    correspondencia = await busca_vetorial(embedding, pool_db, limite=0.98)
+    if correspondencia:
+        return embedding, correspondencia, None
 
     # NOTA: layer2_ai não é mais chamado pelo funnel.py.
     # O processamento em lote é feito via classify_products_batch em funnel.py.

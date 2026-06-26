@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 # Modelos de Domínio
 # =============================================================
 
-class ProductInput(BaseModel):
+class ProdutoEntrada(BaseModel):
     """Produto lido da planilha de entrada."""
     row_index: int = Field(description="Índice da linha na planilha original")
     descricao: str = Field(description="Descrição do produto")
@@ -17,7 +17,7 @@ class ProductInput(BaseModel):
     ncm: str = Field(default="", description="Código NCM")
 
 
-class ProductOutput(BaseModel):
+class ProdutoSaida(BaseModel):
     """Produto processado com categorização."""
     row_index: int
     descricao: str
@@ -29,7 +29,7 @@ class ProductOutput(BaseModel):
     status: str = Field(description="Aprovado ou Pendente de Revisão")
 
 
-class LLMClassification(BaseModel):
+class ClassificacaoLLM(BaseModel):
     """Resposta estruturada do LLM."""
     grupo: str = Field(description="Grupo/categoria principal do produto")
     subgrupo: str = Field(description="Subcategoria do produto")
@@ -39,7 +39,7 @@ class LLMClassification(BaseModel):
     )
 
 
-class VectorMatch(BaseModel):
+class ResultadoBuscaVetorial(BaseModel):
     """Resultado de busca por similaridade vetorial."""
     id: int
     descricao: str
@@ -52,15 +52,15 @@ class VectorMatch(BaseModel):
 # Modelos de Response da API
 # =============================================================
 
-class HealthResponse(BaseModel):
-    """Resposta do health check."""
+class RespostaSaude(BaseModel):
+    """Resposta da verificação de saúde."""
     status: str = "ok"
     service: str = "categorizador-backend"
     version: str = "1.0.0"
     database: str = "unknown"
 
 
-class FeedbackResponse(BaseModel):
+class RespostaRetroalimentacao(BaseModel):
     """Resposta do endpoint de retroalimentação."""
     message: str
     inserted: int = 0
@@ -69,6 +69,6 @@ class FeedbackResponse(BaseModel):
     total: int = 0
 
 
-class ErrorResponse(BaseModel):
+class RespostaErro(BaseModel):
     """Resposta de erro padrão."""
     detail: str

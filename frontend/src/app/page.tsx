@@ -248,12 +248,12 @@ export default function Home() {
             )}
 
             {job && (job.status === 'PENDING' || job.status === 'PROCESSING') && (
-              <ProcessingStatus status={job.status} total={job.total_rows} processed={job.processed_rows} />
+              <ProcessingStatus status={job.status} total={job.total_rows} processados={job.processed_rows} />
             )}
 
             {job?.status === 'COMPLETED' && !reviewing && (
               <div className="feedback-result" style={{ animation: 'none' }}>
-                <ProcessingStatus status={job.status} total={job.total_rows} processed={job.processed_rows} />
+                <ProcessingStatus status={job.status} total={job.total_rows} processados={job.processed_rows} />
                 
                 <div className="metrics-grid" style={{ marginTop: '1.5rem' }}>
                   <div className="metric-card">
@@ -292,8 +292,8 @@ export default function Home() {
               <ReviewPanel
                 jobId={job.id}
                 session={session}
-                onBack={() => setReviewing(false)}
-                onFinalized={() => {
+                aoVoltar={() => setReviewing(false)}
+                aoFinalizar={() => {
                   setReviewing(false);
                   success('Revisão finalizada — pronto para download!');
                   handleDownload();

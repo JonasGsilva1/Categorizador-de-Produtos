@@ -2,9 +2,9 @@
 
 import React, { useState, useRef, useCallback } from 'react';
 
-interface FileUploaderProps {
+interface PropsCarregadorArquivo {
   id: string;
-  onFileSelect: (file: File) => void;
+  onFileSelect: (arquivo: File) => void;
   selectedFile: File | null;
   onClear: () => void;
   disabled?: boolean;
@@ -16,48 +16,48 @@ export default function FileUploader({
   selectedFile,
   onClear,
   disabled = false,
-}: FileUploaderProps) {
-  const [isDragOver, setIsDragOver] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+}: PropsCarregadorArquivo) {
+  const [arrastando, setArrastando] = useState(false);
+  const refInput = useRef<HTMLInputElement>(null);
 
-  const handleDragOver = useCallback(
+  const aoArrastarSobre = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
-      if (!disabled) setIsDragOver(true);
+      if (!disabled) setArrastando(true);
     },
     [disabled]
   );
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
+  const aoSairArraste = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragOver(false);
+    setArrastando(false);
   }, []);
 
-  const handleDrop = useCallback(
+  const aoSoltar = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
-      setIsDragOver(false);
+      setArrastando(false);
       if (disabled) return;
 
-      const file = e.dataTransfer.files[0];
-      if (file && file.name.endsWith('.xlsx')) {
-        onFileSelect(file);
+      const arquivo = e.dataTransfer.files[0];
+      if (arquivo && arquivo.name.endsWith('.xlsx')) {
+        onFileSelect(arquivo);
       }
     },
     [disabled, onFileSelect]
   );
 
-  const handleChange = useCallback(
+  const aoMudar = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        onFileSelect(file);
+      const arquivo = e.target.files?.[0];
+      if (arquivo) {
+        onFileSelect(arquivo);
       }
     },
     [onFileSelect]
   );
 
-  const formatSize = (bytes: number): string => {
+  const formatarTamanho = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -66,19 +66,19 @@ export default function FileUploader({
   return (
     <div>
       <div
-        className={`drop-zone ${isDragOver ? 'drag-over' : ''} ${
+        className={`drop-zone ${arrastando ? 'drag-over' : ''} ${
           selectedFile ? 'has-file' : ''
         }`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        onDragOver={aoArrastarSobre}
+        onDragLeave={aoSairArraste}
+        onDrop={aoSoltar}
       >
         <input
-          ref={inputRef}
+          ref={refInput}
           id={id}
           type="file"
           accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          onChange={handleChange}
+          onChange={aoMudar}
           disabled={disabled}
         />
         <div className="drop-zone-icon">
@@ -105,7 +105,7 @@ export default function FileUploader({
           <div className="file-preview-info">
             <div className="file-preview-name">{selectedFile.name}</div>
             <div className="file-preview-size">
-              {formatSize(selectedFile.size)}
+              {formatarTamanho(selectedFile.size)}
             </div>
           </div>
           <button
@@ -113,7 +113,7 @@ export default function FileUploader({
             onClick={(e) => {
               e.stopPropagation();
               onClear();
-              if (inputRef.current) inputRef.current.value = '';
+              if (refInput.current) refInput.current.value = '';
             }}
             disabled={disabled}
             title="Remover arquivo"

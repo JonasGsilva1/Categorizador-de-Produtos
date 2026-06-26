@@ -21,39 +21,39 @@ from sklearn.metrics.pairwise import cosine_similarity
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Cache global (módulo-level, shared entre coroutines)
+# Cache global (módulo-level, compartilhado entre coroutines)
 # ---------------------------------------------------------------------------
-_vectorizer: TfidfVectorizer | None = None
-_matrix = None        # scipy sparse matrix (n_docs × vocab)
-_records: list[dict] = []  # [{"grupo": str, "subgrupo": str, "descricao": str}]
-_lock = asyncio.Lock()
-_last_loaded: float = 0.0
-CACHE_TTL: int = 300  # segundos — recarregar a cada 5 minutos
+_vetorizador: TfidfVectorizer | None = None
+_matriz = None        # matriz esparsa scipy (n_docs × vocab)
+_registros: list[dict] = []  # [{"grupo": str, "subgrupo": str, "descricao": str}]
+_trava = asyncio.Lock()
+_ultimo_carregamento: float = 0.0
+TTL_CACHE: int = 300  # segundos — recarregar a cada 5 minutos
 
 
-async def load_index(pool: asyncpg.Pool, force: bool = False) -> None:
+async def load_index(pool_db: asyncpg.Pool, forcar: bool = False) -> None:
     """
     Carrega ou recarrega o índice TF-IDF a partir de product_history.
 
-    O lock garante que apenas uma coroutine carregue o índice por vez.
+    A trava (lock) garante que apenas uma coroutine carregue o índice por vez.
     Chamadas concorrentes aguardam e reutilizam o índice recém-carregado.
 
     Args:
-        pool:  Pool asyncpg ativo.
-        force: Se True, ignora o TTL e reconstrói o índice imediatamente.
+        pool_db:  Pool asyncpg ativo.
+        forcar: Se True, ignora o TTL e reconstrói o índice imediatamente.
                Use após upserts de feedback para manter coerência.
     """
-    global _vectorizer, _matrix, _records, _last_loaded
+    global _vetorizador, _matriz, _registros, _ultimo_carregamento
 
-    async with _lock:
-        now = time.monotonic()
-        if not force and _vectorizer is not None and (now - _last_loaded) < CACHE_TTL:
+    async with _trava:
+        agora = time.monotonic()
+        if not forcar and _vetorizador is not None and (agora - _ultimo_carregamento) < TTL_CACHE:
             return  # cache ainda válido
 
         logger.info("Carregando índice TF-IDF de product_history...")
 
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
+        async with pool_db.acquire() as conexao:
+            linhas = await conexao.fetch(
                 """
                 SELECT descricao, grupo, subgrupo
                 FROM product_history
@@ -62,92 +62,92 @@ async def load_index(pool: asyncpg.Pool, force: bool = False) -> None:
                 """
             )
 
-        if not rows:
+        if not linhas:
             logger.warning("product_history vazio — índice TF-IDF não criado.")
             return
 
-        _records = [
+        _registros = [
             {
                 "descricao": r["descricao"],
                 "grupo": r["grupo"],
                 "subgrupo": r["subgrupo"],
             }
-            for r in rows
+            for r in linhas
         ]
-        texts = [r["descricao"] for r in _records]
+        textos = [r["descricao"] for r in _registros]
 
-        _vectorizer = TfidfVectorizer(
+        _vetorizador = TfidfVectorizer(
             analyzer="word",
             ngram_range=(1, 2),
             min_df=1,
             strip_accents="unicode",
             lowercase=True,
         )
-        _matrix = _vectorizer.fit_transform(texts)
-        _last_loaded = time.monotonic()
+        _matriz = _vetorizador.fit_transform(textos)
+        _ultimo_carregamento = time.monotonic()
 
         logger.info(
-            f"Índice TF-IDF construído: {len(_records)} documentos, "
-            f"{_matrix.shape[1]} features."
+            f"Índice TF-IDF construído: {len(_registros)} documentos, "
+            f"{_matriz.shape[1]} features."
         )
 
 
 async def tfidf_search(
     descricao: str,
-    pool: asyncpg.Pool,
-    threshold: float = 0.65,
+    pool_db: asyncpg.Pool,
+    limite: float = 0.65,
 ) -> dict | None:
     """
-    Busca o produto mais similar no índice TF-IDF por cosine similarity.
+    Busca o produto mais similar no índice TF-IDF por similaridade de cosseno.
 
     Args:
         descricao: Descrição do produto a classificar.
-        pool:      Pool asyncpg para recarregar o índice se necessário.
-        threshold: Similaridade mínima para aceitar o match (padrão 0.65).
+        pool_db:      Pool asyncpg para recarregar o índice se necessário.
+        limite: Similaridade mínima para aceitar a correspondência (padrão 0.65).
 
     Returns:
         Dict ``{"grupo": str, "subgrupo": str, "similarity": float}``
-        ou None se nenhum match atingir o threshold.
+        ou None se nenhuma correspondência atingir o limite.
     """
-    global _vectorizer, _matrix, _records
+    global _vetorizador, _matriz, _registros
 
-    if _vectorizer is None:
-        await load_index(pool)
+    if _vetorizador is None:
+        await load_index(pool_db)
 
-    if _vectorizer is None or _matrix is None or not _records:
+    if _vetorizador is None or _matriz is None or not _registros:
         logger.debug("Índice TF-IDF indisponível — pulando Camada 2.")
         return None
 
-    vec = _vectorizer.transform([descricao])
-    sims: np.ndarray = cosine_similarity(vec, _matrix).flatten()
+    vetor = _vetorizador.transform([descricao])
+    similaridades: np.ndarray = cosine_similarity(vetor, _matriz).flatten()
 
-    best_idx = int(np.argmax(sims))
-    best_score = float(sims[best_idx])
+    melhor_indice = int(np.argmax(similaridades))
+    melhor_pontuacao = float(similaridades[melhor_indice])
 
-    if best_score >= threshold:
-        match = _records[best_idx]
+    if melhor_pontuacao >= limite:
+        correspondencia = _registros[melhor_indice]
         logger.debug(
-            f"TF-IDF match: sim={best_score:.4f} → "
-            f"{match['grupo']}/{match['subgrupo']} "
-            f"(ref: '{match['descricao'][:60]}')"
+            f"TF-IDF match: sim={melhor_pontuacao:.4f} → "
+            f"{correspondencia['grupo']}/{correspondencia['subgrupo']} "
+            f"(ref: '{correspondencia['descricao'][:60]}')"
         )
         return {
-            "grupo": match["grupo"],
-            "subgrupo": match["subgrupo"],
-            "similarity": best_score,
+            "grupo": correspondencia["grupo"],
+            "subgrupo": correspondencia["subgrupo"],
+            "similarity": melhor_pontuacao,
         }
 
-    logger.debug(f"TF-IDF sem match acima de {threshold}: melhor={best_score:.4f}")
+    logger.debug(f"TF-IDF sem correspondência acima de {limite}: melhor={melhor_pontuacao:.4f}")
     return None
 
 
 def invalidate_cache() -> None:
     """
-    Invalida o cache TF-IDF de forma síncrona (zera _last_loaded).
+    Invalida o cache TF-IDF de forma síncrona (zera _ultimo_carregamento).
 
     Útil quando o load_index com force=True não pode ser aguardado.
     O próximo tfidf_search recarregará o índice automaticamente.
     """
-    global _last_loaded
-    _last_loaded = 0.0
+    global _ultimo_carregamento
+    _ultimo_carregamento = 0.0
     logger.info("Cache TF-IDF invalidado.")

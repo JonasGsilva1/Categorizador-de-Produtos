@@ -2,14 +2,14 @@
 
 import React from 'react';
 
-interface ProcessingStatusProps {
+interface PropsStatusProcessamento {
   status: string;
   total: number;
-  processed: number;
+  processados: number;
 }
 
-export default function ProcessingStatus({ status, total, processed }: ProcessingStatusProps) {
-  const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
+export default function ProcessingStatus({ status, total, processados }: PropsStatusProcessamento) {
+  const porcentagem = total > 0 ? Math.round((processados / total) * 100) : 0;
   
   return (
     <div className="processing-overlay">
@@ -31,13 +31,13 @@ export default function ProcessingStatus({ status, total, processed }: Processin
       {total > 0 && (
         <>
           <p className="processing-subtitle" style={{ marginBottom: '1rem' }}>
-            {processed} de {total} analisados ({percentage}%)
+            {processados} de {total} analisados ({porcentagem}%)
           </p>
           <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
             <div 
               style={{ 
                 height: '100%', 
-                width: `${percentage}%`, 
+                width: `${porcentagem}%`, 
                 background: 'linear-gradient(90deg, #667eea, #764ba2)',
                 transition: 'width 0.5s ease-out'
               }} 
@@ -50,7 +50,7 @@ export default function ProcessingStatus({ status, total, processed }: Processin
         <div className="funnel-steps" style={{ marginTop: '2rem' }}>
           <div className="funnel-step active">
             <span className="funnel-step-icon">🤖</span>
-            <span>Motor do Gemini trabalhando em background...</span>
+            <span>Motor do Gemini trabalhando em segundo plano...</span>
           </div>
         </div>
       )}

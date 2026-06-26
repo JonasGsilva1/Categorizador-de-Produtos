@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import FileUploader from './FileUploader';
 import { API_BASE } from '@/lib/api';
 
-interface FeedbackResult {
+interface ResultadoRetroalimentacao {
   message: string;
   inserted: number;
   updated: number;
@@ -13,71 +13,71 @@ interface FeedbackResult {
 }
 
 export default function FeedbackUploader({ session }: { session: any }) {
-  const [file, setFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [result, setResult] = useState<FeedbackResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [resultado, setResultado] = useState<ResultadoRetroalimentacao | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
 
-  const handleSubmit = async () => {
-    if (!file || !session) return;
+  const enviarRetroalimentacao = async () => {
+    if (!arquivo || !session) return;
 
-    setIsUploading(true);
-    setError(null);
-    setResult(null);
+    setEnviando(true);
+    setErro(null);
+    setResultado(null);
 
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', arquivo);
 
-      const response = await fetch(`${API_BASE}/feedback`, {
+      const resposta = await fetch(`${API_BASE}/feedback`, {
         method: 'POST',
         body: formData,
         headers: { Authorization: `Bearer ${session.access_token}` }
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
+      if (!resposta.ok) {
+        const dadosErro = await resposta.json().catch(() => null);
         throw new Error(
-          errorData?.detail || `Erro ${response.status}: ${response.statusText}`
+          dadosErro?.detail || `Erro ${resposta.status}: ${resposta.statusText}`
         );
       }
 
-      const data: FeedbackResult = await response.json();
-      setResult(data);
-      setFile(null);
+      const dados: ResultadoRetroalimentacao = await resposta.json();
+      setResultado(dados);
+      setArquivo(null);
     } catch (err) {
-      setError(
+      setErro(
         err instanceof Error
           ? err.message
           : 'Erro ao enviar retroalimentação. Tente novamente.'
       );
     } finally {
-      setIsUploading(false);
+      setEnviando(false);
     }
   };
 
   return (
     <div>
-      {!result ? (
+      {!resultado ? (
         <>
           <FileUploader
             id="feedback-file-input"
-            onFileSelect={setFile}
-            selectedFile={file}
+            onFileSelect={setArquivo}
+            selectedFile={arquivo}
             onClear={() => {
-              setFile(null);
-              setError(null);
+              setArquivo(null);
+              setErro(null);
             }}
-            disabled={isUploading}
+            disabled={enviando}
           />
 
           <button
             id="feedback-submit-btn"
             className="btn btn-success btn-full"
-            onClick={handleSubmit}
-            disabled={!file || isUploading}
+            onClick={enviarRetroalimentacao}
+            disabled={!arquivo || enviando}
           >
-            {isUploading ? (
+            {enviando ? (
               <>⏳ Processando retroalimentação...</>
             ) : (
               <>🔄 Enviar Retroalimentação</>
@@ -87,24 +87,24 @@ export default function FeedbackUploader({ session }: { session: any }) {
       ) : (
         <div className="feedback-result">
           <div className="feedback-result-icon">✅</div>
-          <h4 className="feedback-result-title">{result.message}</h4>
+          <h4 className="feedback-result-title">{resultado.message}</h4>
           <p className="feedback-result-detail">
-            {result.total} linhas processadas • {result.inserted} inseridas •{' '}
-            {result.updated} atualizadas
-            {result.errors > 0 && ` • ${result.errors} erros`}
+            {resultado.total} linhas processadas • {resultado.inserted} inseridas •{' '}
+            {resultado.updated} atualizadas
+            {resultado.errors > 0 && ` • ${resultado.errors} erros`}
           </p>
 
           <div className="metrics-grid" style={{ marginTop: '1rem' }}>
             <div className="metric-card">
-              <div className="metric-value total">{result.total}</div>
+              <div className="metric-value total">{resultado.total}</div>
               <div className="metric-label">Total</div>
             </div>
             <div className="metric-card">
-              <div className="metric-value approved">{result.inserted}</div>
+              <div className="metric-value approved">{resultado.inserted}</div>
               <div className="metric-label">Inseridas</div>
             </div>
             <div className="metric-card">
-              <div className="metric-value pending">{result.updated}</div>
+              <div className="metric-value pending">{resultado.updated}</div>
               <div className="metric-label">Atualizadas</div>
             </div>
           </div>
@@ -112,8 +112,8 @@ export default function FeedbackUploader({ session }: { session: any }) {
           <button
             className="btn btn-primary btn-full"
             onClick={() => {
-              setResult(null);
-              setFile(null);
+              setResultado(null);
+              setArquivo(null);
             }}
             style={{ marginTop: '1.5rem' }}
           >
@@ -122,10 +122,10 @@ export default function FeedbackUploader({ session }: { session: any }) {
         </div>
       )}
 
-      {error && (
+      {erro && (
         <div className="error-banner">
           <span className="error-banner-icon">⚠️</span>
-          <span>{error}</span>
+          <span>{erro}</span>
         </div>
       )}
     </div>

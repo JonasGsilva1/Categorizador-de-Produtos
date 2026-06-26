@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import create_pool, close_pool, is_pool_ready
-from app.models import HealthResponse
+from app.models import RespostaSaude
 
 # Configuração de logging
 logging.basicConfig(
@@ -25,14 +25,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle: inicializa e finaliza recursos da aplicação."""
-    # Startup
+    # Inicialização (Startup)
     logger.info("🚀 Iniciando Categorizador Inteligente...")
-    settings = get_settings()
-    logger.info(f"   Frontend URL (CORS): {settings.frontend_url}")
-    logger.info(f"   Modelo de Embedding: {settings.embedding_model} ({settings.embedding_dimensions}d)")
-    logger.info(f"   Modelo LLM: {settings.llm_model}")
-    logger.info(f"   Threshold Similaridade: {settings.similarity_threshold}")
-    logger.info(f"   Threshold Confiança LLM: {settings.llm_confidence_threshold}%")
+    configuracoes = get_settings()
+    logger.info(f"   Frontend URL (CORS): {configuracoes.frontend_url}")
+    logger.info(f"   Modelo de Embedding: {configuracoes.embedding_model} ({configuracoes.embedding_dimensions}d)")
+    logger.info(f"   Modelo LLM: {configuracoes.llm_model}")
+    logger.info(f"   Threshold Similaridade: {configuracoes.similarity_threshold}")
+    logger.info(f"   Threshold Confiança LLM: {configuracoes.llm_confidence_threshold}%")
     logger.info(f"   PORT (Railway): {os.getenv('PORT', 'não definido')}")
 
     # Garante que a pool seja criada com sucesso, senão a aplicação não iniciará.
@@ -41,15 +41,15 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
+    # Desligamento (Shutdown)
     logger.info("🛑 Encerrando aplicação...")
     await close_pool()
     logger.info("   ✅ Pool de conexões fechado")
 
 
 # --- App ---
-_settings = get_settings()
-_is_prod = _settings.environment.lower() == "production"
+_configuracoes = get_settings()
+_eh_prod = _configuracoes.environment.lower() == "production"
 
 app = FastAPI(
     title="Categorizador Inteligente de Produtos",
@@ -60,12 +60,12 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
-    docs_url=None if _is_prod else "/docs",
-    redoc_url=None if _is_prod else "/redoc",
-    openapi_url=None if _is_prod else "/openapi.json"
+    docs_url=None if _eh_prod else "/docs",
+    redoc_url=None if _eh_prod else "/redoc",
+    openapi_url=None if _eh_prod else "/openapi.json"
 )
 
-# --- Hardening & Security Middlewares ---
+# --- Middlewares de Hardening e Segurança ---
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from app.middlewares import SecurityHeadersMiddleware, RequestIDMiddleware, RateLimitMiddleware
 
@@ -75,10 +75,10 @@ from app.middlewares import SecurityHeadersMiddleware, RequestIDMiddleware, Rate
 #   - o próprio domínio do Railway (requisições diretas)
 #   - o domínio do Vercel (quando o Next.js Route Handler faz fetch para cá)
 # Por isso sempre incluímos ambos. Se ALLOWED_HOSTS=* o middleware aceita qualquer host.
-_raw_hosts = [h.strip() for h in _settings.allowed_hosts.split(",") if h.strip()]
+_hosts_crus = [h.strip() for h in _configuracoes.allowed_hosts.split(",") if h.strip()]
 
 # Garante que domínios essenciais sempre estão presentes, independente da env var
-_essential_hosts = [
+_hosts_essenciais = [
     "localhost",
     "127.0.0.1",
     "categorizador-production.up.railway.app",
@@ -87,13 +87,13 @@ _essential_hosts = [
     "*.vercel.app",
 ]
 
-if "*" in _raw_hosts:
-    # Se wildcard total, passa direto — permite tudo
-    _allowed_hosts = ["*"]
+if "*" in _hosts_crus:
+    # Se curinga (wildcard) total, passa direto — permite tudo
+    _hosts_permitidos = ["*"]
 else:
-    _allowed_hosts = list(set(_raw_hosts + _essential_hosts))
+    _hosts_permitidos = list(set(_hosts_crus + _hosts_essenciais))
 
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts_permitidos)
 
 # 2. CORS (Executado depois do Trusted Host)
 
@@ -107,12 +107,12 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestIDMiddleware)
 
 # --- CORS ---
-# Usa funcao lazy para nao crashar no import se as env vars nao existirem
-def _get_cors_origins():
+# Usa função preguicosa (lazy) para não quebrar no import se as variáveis de ambiente não existirem
+def _obter_origens_cors():
     try:
-        s = get_settings()
+        cfg = get_settings()
         return list({
-            s.frontend_url,
+            cfg.frontend_url,
             "http://localhost:3000",
             "http://127.0.0.1:3000",
             "https://categorizador.vercel.app",
@@ -128,10 +128,10 @@ def _get_cors_origins():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_get_cors_origins(),
+    allow_origins=_obter_origens_cors(),
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"], # Bloqueia PUT, DELETE, PATCH
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"], # Bloqueia PUT, DELETE
     allow_headers=["Authorization", "Content-Type", "Accept"], # Bloqueia headers maliciosos
     expose_headers=[
         "Content-Disposition",
@@ -142,43 +142,43 @@ app.add_middleware(
     ],
 )
 
-# --- Routers ---
+# --- Roteadores (Routers) ---
 from app.routers import categorize, feedback
 
 app.include_router(categorize.router)
 app.include_router(feedback.router)
 
 
-# --- Global Exception Handler (LGPD) ---
+# --- Manipulador Global de Exceções (LGPD) ---
 from fastapi.responses import JSONResponse
 import traceback
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
+async def manipulador_excecao_global(request, excecao):
     """
     Impede que stacktraces ou detalhes internos do DB/App vazem para o cliente.
     Loga tudo internamente, mas retorna erro genérico 500.
     """
-    req_id = getattr(request.state, 'req_id', 'unknown')
-    logger.error(f"[ReqID: {req_id}] Erro interno não tratado: {exc}\n{traceback.format_exc()}")
+    id_requisicao = getattr(request.state, 'req_id', 'unknown')
+    logger.error(f"[ReqID: {id_requisicao}] Erro interno não tratado: {excecao}\n{traceback.format_exc()}")
     return JSONResponse(
         status_code=500,
-        content={"detail": "Erro interno no servidor. Tente novamente mais tarde.", "req_id": req_id}
+        content={"detail": "Erro interno no servidor. Tente novamente mais tarde.", "req_id": id_requisicao}
     )
 
-# --- Health Check ---
-@app.get("/health", response_model=HealthResponse, tags=["Sistema"])
-async def health_check():
-    """Verifica se a API esta funcionando."""
+# --- Verificação de Saúde (Health Check) ---
+@app.get("/health", response_model=RespostaSaude, tags=["Sistema"])
+async def verificacao_saude():
+    """Verifica se a API está funcionando."""
     try:
-        db_status = "connected" if is_pool_ready() else "unavailable"
-        return HealthResponse(
-            status="ok" if db_status == "connected" else "degraded",
-            database=db_status,
+        status_db = "connected" if is_pool_ready() else "unavailable"
+        return RespostaSaude(
+            status="ok" if status_db == "connected" else "degraded",
+            database=status_db,
         )
-    except Exception as e:
-        logger.error(f"Health check error: {e}")
-        return HealthResponse(status="error", database="error")
+    except Exception as excecao:
+        logger.error(f"Erro na verificação de saúde: {excecao}")
+        return RespostaSaude(status="error", database="error")
 
 
 @app.get("/", tags=["Sistema"])

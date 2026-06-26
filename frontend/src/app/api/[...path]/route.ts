@@ -98,6 +98,13 @@ export async function PUT(
   return proxyRequest(request, params);
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { path: string[] } }
+) {
+  return proxyRequest(request, params);
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { path: string[] } }

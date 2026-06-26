@@ -6,9 +6,9 @@ import { useRouter } from 'next/navigation';
 
 export default function Login() {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [senha, setSenha] = useState('');
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -18,19 +18,19 @@ export default function Login() {
     });
   }, [router]);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const realizarLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setError(null);
+    setCarregando(true);
+    setErro(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { error: erroAuth } = await supabase.auth.signInWithPassword({
       email,
-      password,
+      password: senha,
     });
 
-    if (error) {
-      setError(error.message);
-      setIsLoading(false);
+    if (erroAuth) {
+      setErro(erroAuth.message);
+      setCarregando(false);
     } else {
       router.push('/');
     }
@@ -48,7 +48,7 @@ export default function Login() {
           <p style={{ color: '#a0a0c0', fontSize: '0.875rem', marginTop: '0.5rem' }}>Entre com suas credenciais para acessar o motor.</p>
         </div>
 
-        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <form onSubmit={realizarLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div>
             <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', color: '#a0a0c0' }}>E-mail</label>
             <input 
@@ -68,8 +68,8 @@ export default function Login() {
             <input 
               type="password" 
               required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={senha}
+              onChange={(e) => setSenha(e.target.value)}
               style={{
                 width: '100%', padding: '0.75rem', borderRadius: '8px',
                 background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
@@ -78,10 +78,10 @@ export default function Login() {
             />
           </div>
 
-          {error && <div className="error-banner" style={{ marginTop: '0' }}>{error}</div>}
+          {erro && <div className="error-banner" style={{ marginTop: '0' }}>{erro}</div>}
 
-          <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }} disabled={isLoading}>
-            {isLoading ? 'Autenticando...' : 'Entrar'}
+          <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }} disabled={carregando}>
+            {carregando ? 'Autenticando...' : 'Entrar'}
           </button>
         </form>
       </div>

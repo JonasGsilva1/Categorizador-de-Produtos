@@ -7,42 +7,42 @@ Aplica o limiar de confiança sobre a resposta do LLM mapeada do lote:
 """
 
 import logging
-from app.models import ProductInput, ProductOutput
+from app.models import ProdutoEntrada, ProdutoSaida
 
 logger = logging.getLogger(__name__)
 
 
 def layer3_filter(
-    product: ProductInput,
-    llm_result: dict | object,
-) -> ProductOutput:
+    produto: ProdutoEntrada,
+    resultado_llm: dict | object,
+) -> ProdutoSaida:
     """
     Aplica o filtro de segurança (>= 85) no resultado do lote.
     Aceita tanto dicts quanto objetos Pydantic (ProdutoCategorizado).
     """
-    threshold = 85
+    limite = 85
     
     # Suporte a dict e Pydantic model
-    def _get(obj, key, default=None):
-        if isinstance(obj, dict):
-            return obj.get(key, default)
-        return getattr(obj, key, default)
+    def _obter(objeto, chave, padrao=None):
+        if isinstance(objeto, dict):
+            return objeto.get(chave, padrao)
+        return getattr(objeto, chave, padrao)
     
     # Extrair os campos
-    grupo = _get(llm_result, "grupo", "")
-    subgrupo = _get(llm_result, "subgrupo", "")
-    grau_de_confianca = _get(llm_result, "grau_de_confianca", 0)
+    grupo = _obter(resultado_llm, "grupo", "")
+    subgrupo = _obter(resultado_llm, "subgrupo", "")
+    grau_de_confianca = _obter(resultado_llm, "grau_de_confianca", 0)
 
-    if grau_de_confianca >= threshold:
+    if grau_de_confianca >= limite:
         logger.debug(
             f"LLM aprovado: confiança={grau_de_confianca}% "
             f"→ {grupo}/{subgrupo}"
         )
-        return ProductOutput(
-            row_index=product.row_index,
-            descricao=product.descricao,
-            ean=product.ean,
-            ncm=product.ncm,
+        return ProdutoSaida(
+            row_index=produto.row_index,
+            descricao=produto.descricao,
+            ean=produto.ean,
+            ncm=produto.ncm,
             grupo=grupo,
             subgrupo=subgrupo,
             origem="LLM",
@@ -50,14 +50,14 @@ def layer3_filter(
         )
     else:
         logger.debug(
-            f"LLM baixa confiança: {grau_de_confianca}% < {threshold}% "
+            f"LLM baixa confiança: {grau_de_confianca}% < {limite}% "
             f"→ Pendente de Revisão"
         )
-        return ProductOutput(
-            row_index=product.row_index,
-            descricao=product.descricao,
-            ean=product.ean,
-            ncm=product.ncm,
+        return ProdutoSaida(
+            row_index=produto.row_index,
+            descricao=produto.descricao,
+            ean=produto.ean,
+            ncm=produto.ncm,
             grupo="",
             subgrupo="",
             origem="LLM (Baixa Confiança)",

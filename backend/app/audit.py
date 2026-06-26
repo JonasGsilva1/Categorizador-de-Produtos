@@ -11,42 +11,42 @@ logger = logging.getLogger("lgpd_audit")
 
 # Para o Railway, usaremos o logger padrão (stdout) mas com formatação JSON para
 # facilitar extração posterior, caso necessário.
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter('%(message)s'))
-logger.addHandler(handler)
+manipulador = logging.StreamHandler()
+manipulador.setFormatter(logging.Formatter('%(message)s'))
+logger.addHandler(manipulador)
 logger.setLevel(logging.INFO)
 # Impede que os logs sejam duplicados no root logger
 logger.propagate = False
 
 def log_audit_event(
-    user_id: str,
-    action: str,
-    resource: str,
-    ip_address: str = "unknown",
-    req_id: str = "unknown",
+    id_usuario: str,
+    acao: str,
+    recurso: str,
+    endereco_ip: str = "unknown",
+    id_requisicao: str = "unknown",
     status: str = "success",
-    details: str = ""
+    detalhes: str = ""
 ):
     """
     Registra um evento de auditoria conforme exigências da LGPD.
-    - user_id: ID do usuário (Supabase Auth)
-    - action: 'UPLOAD', 'DOWNLOAD', 'FEEDBACK'
-    - resource: Nome do arquivo ou ID do job
-    - ip_address: IP do cliente
-    - req_id: ID único da requisição
+    - id_usuario: ID do usuário (Supabase Auth)
+    - acao: 'UPLOAD', 'DOWNLOAD', 'FEEDBACK'
+    - recurso: Nome do arquivo ou ID do job
+    - endereco_ip: IP do cliente
+    - id_requisicao: ID único da requisição
     - status: 'success', 'failure'
-    - details: Mensagem de erro se falha, ou metadados de sucesso
+    - detalhes: Mensagem de erro se falha, ou metadados de sucesso
     """
-    event = {
+    evento = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "audit": True,
-        "req_id": req_id,
-        "user_id": user_id,
-        "action": action,
-        "resource": resource,
-        "ip_address": ip_address,
+        "req_id": id_requisicao,
+        "user_id": id_usuario,
+        "action": acao,
+        "resource": recurso,
+        "ip_address": endereco_ip,
         "status": status,
-        "details": details
+        "details": detalhes
     }
     
-    logger.info(json.dumps(event))
+    logger.info(json.dumps(evento))
