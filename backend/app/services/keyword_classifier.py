@@ -79,7 +79,7 @@ _ALIMENTO_CONTEXTO = {
 # Bigramas definidos ANTES de unigramas para ganhar em caso de empate de score.
 # ---------------------------------------------------------------------------
 
-REGRAS_PALAVRAS_CHAVE: dict[str, Rule] = {
+REGRAS_PALAVRAS_CHAVE: dict[str, Regra] = {
 
     # ═══════════════════════════════════════════════════════════════════════
     # BEBIDAS
