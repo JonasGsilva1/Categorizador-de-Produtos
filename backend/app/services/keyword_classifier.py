@@ -618,8 +618,8 @@ def classify_by_keywords(descricao: str) -> dict | None:
     if not pontuacoes:
         return None
 
-    best_chave = max(pontuacoes, key=lambda k: pontuacoes[k])
-    melhor_pontuacao = scores[melhor_chave]
+    melhor_chave = max(pontuacoes, key=lambda k: pontuacoes[k])
+    melhor_pontuacao = pontuacoes[melhor_chave]
 
     logger.debug(
         f"Keywords → {melhor_chave[0]}/{melhor_chave[1]} "
