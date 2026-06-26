@@ -592,15 +592,15 @@ def classify_by_keywords(descricao: str) -> dict | None:
     palavras = normalizado.split()
     conjunto_tokens = set(palavras)
 
-    bigramas  = {palavras[i] + " " + words[i+1]             for i in range(len(palavras) - 1)}
-    trigramas = {palavras[i] + " " + words[i+1] + " " + words[i+2] for i in range(len(palavras) - 2)}
+    bigramas  = {palavras[i] + " " + palavras[i+1]             for i in range(len(palavras) - 1)}
+    trigramas = {palavras[i] + " " + palavras[i+1] + " " + palavras[i+2] for i in range(len(palavras) - 2)}
     todos_os_termos = conjunto_tokens | bigramas | trigramas
 
     # Acumular scores por (grupo, subgrupo)
     pontuacoes: dict[tuple[str, str], int] = {}
 
     for termo, regra in REGRAS_PALAVRAS_CHAVE.items():
-        if termo not in all_terms:
+        if termo not in todos_os_termos:
             continue
 
         # Verificar veto contextual
@@ -613,7 +613,7 @@ def classify_by_keywords(descricao: str) -> dict | None:
             continue
 
         chave = (regra.grupo, regra.subgrupo)
-        pontuacoes[chave] = pontuacoes.get(key, 0) + regra.pontuacao
+        pontuacoes[chave] = pontuacoes.get(chave, 0) + regra.pontuacao
 
     if not pontuacoes:
         return None
