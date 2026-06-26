@@ -47,6 +47,8 @@ async def create_pool() -> asyncpg.Pool:
 
     if _needs_ssl(dsn):
         ctx_ssl = ssl.create_default_context()
+        ctx_ssl.check_hostname = False
+        ctx_ssl.verify_mode = ssl.CERT_NONE
         args_conexao["ssl"] = ctx_ssl
 
     logger.info("Conectando ao PostgreSQL...")
