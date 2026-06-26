@@ -44,8 +44,9 @@ def verify_supabase_token(
     credenciais: HTTPAuthorizationCredentials = Security(seguranca)
 ) -> dict:
     """
-    Valida o token JWT do Supabase usando o cliente oficial.
-    Retorna os dados do usuário (user.id, user.email, etc).
+    Valida o token JWT do Supabase.
+    Otimizado para usar PyJWT localmente (zero latência de rede) se a chave JWT
+    estiver configurada. Faz fallback para a API do Supabase em caso de erro.
     """
     token = credenciais.credentials
     
@@ -53,23 +54,42 @@ def verify_supabase_token(
         logger.warning("[AUTH] Token vazio ou muito curto recebido.")
         raise HTTPException(status_code=401, detail="Token inválido.")
     
+    import os
+    import jwt
+    jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "")
+    
+    # Tentativa 1: Validação Local Otimizada (sub-milissegundo, sem rede)
+    if jwt_secret:
+        try:
+            payload = jwt.decode(
+                token,
+                jwt_secret,
+                algorithms=["HS256"],
+                options={"verify_aud": False}
+            )
+            user_id = payload.get("sub")
+            email = payload.get("email", "")
+            if user_id:
+                return {"user_id": user_id, "email": email}
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expirado.")
+        except Exception as excecao_jwt:
+            logger.debug(f"[AUTH] Fallback para Supabase API após erro no PyJWT: {excecao_jwt}")
+            # Se a validação local falhar (ex: chave errada), tenta o fallback.
+
+    # Tentativa 2: Fallback (Requisição HTTP via SDK)
     cliente = obter_cliente_supabase()
     if cliente is None:
         raise HTTPException(
             status_code=500,
-            detail="Erro de configuração: variáveis SUPABASE_URL/ANON_KEY não configuradas."
+            detail="Erro de configuração: variáveis de autenticação não configuradas."
         )
     
     try:
-        # O método get_user faz a validação automática do token
         resultado = cliente.auth.get_user(token)
-        
         if resultado and resultado.user:
-            logger.debug(f"[AUTH] Token validado para user_id: {resultado.user.id}")
             return {"user_id": resultado.user.id, "email": resultado.user.email}
-        
         raise HTTPException(status_code=401, detail="Token inválido.")
-        
     except Exception as excecao:
-        logger.warning(f"[AUTH] Token inválido: {excecao}")
+        logger.warning(f"[AUTH] Token inválido na API: {excecao}")
         raise HTTPException(status_code=401, detail="Token inválido.")

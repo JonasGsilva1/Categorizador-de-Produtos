@@ -44,9 +44,7 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
             raise FileNotFoundError(f"Arquivo temporário não encontrado: {file_path}")
 
         with open(file_path, "rb") as arquivo:
-            bytes_arquivo = arquivo.read()
-
-        produtos = read_products(bytes_arquivo)
+            produtos = read_products(arquivo)
         total_linhas = len(produtos)
         logger.info(f"[Tarefa {job_id[:8]}] {total_linhas} produtos lidos.")
 
@@ -146,10 +144,13 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
             logger.error(f"[Tarefa {job_id[:8]}] Falha ao remover arquivo temporário: {erro_os}")
 
 
-async def create_job(user_id: str, file_bytes: bytes, filename: str) -> tuple[str, str]:
+from typing import BinaryIO
+import shutil
+
+async def create_job(user_id: str, file_obj: BinaryIO, filename: str) -> tuple[str, str]:
     """
     Cria um registro de tarefa (job) no banco de dados e salva o arquivo fisicamente.
-    Retorna (job_id, file_path).
+    Retorna (job_id, file_path). Usa shutil para não estourar a memória RAM.
     """
     pool_db = require_pool()
     configuracoes = get_settings()
@@ -166,7 +167,8 @@ async def create_job(user_id: str, file_bytes: bytes, filename: str) -> tuple[st
     caminho_arquivo = os.path.join(configuracoes.temp_storage_path, f"{job_id}_{filename}")
 
     with open(caminho_arquivo, "wb") as arquivo_temp:
-        arquivo_temp.write(file_bytes)
+        file_obj.seek(0)
+        shutil.copyfileobj(file_obj, arquivo_temp)
 
     async with pool_db.acquire() as conexao:
         await conexao.execute(

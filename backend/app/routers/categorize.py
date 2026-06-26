@@ -10,7 +10,7 @@ import uuid
 import json
 import asyncio
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -29,6 +29,7 @@ TAMANHO_MAX_ARQUIVO = 50 * 1024 * 1024
 @router.post("/categorize")
 async def categorize_products(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user_data: dict = Depends(verify_supabase_token)
 ):
@@ -47,33 +48,23 @@ async def categorize_products(
         log_audit_event(id_usuario, "UPLOAD", nome_arquivo_seguro, ip_cliente, id_requisicao, "failure", "Extensão inválida")
         raise HTTPException(status_code=400, detail="Apenas arquivos .xlsx são permitidos.")
 
-    bytes_arquivo = await file.read()
+    # 1. Validação Anti-Malware (Magic Bytes) sem carregar o arquivo inteiro na RAM
+    assinatura = file.file.read(4)
+    file.file.seek(0)
     
-    # 1. Validação Anti-Malware (Magic Bytes)
     # Arquivos XLSX são ZIPs sob o capô, portanto a assinatura Hexadecimal inicial deve ser 'PK' (50 4B 03 04)
-    if len(bytes_arquivo) < 4 or not bytes_arquivo.startswith(b'PK\x03\x04'):
+    if len(assinatura) < 4 or not assinatura.startswith(b'PK\x03\x04'):
         raise HTTPException(status_code=415, detail="Arquivo corrompido ou malicioso. Apenas formatos XLSX reais são permitidos.")
 
-    if len(bytes_arquivo) > TAMANHO_MAX_ARQUIVO:
-        raise HTTPException(status_code=413, detail=f"Arquivo muito grande.")
-
-    # 2. Cria o Job e salva arquivo temporariamente
+    # 2. Cria o Job e salva arquivo temporariamente em chunks
     try:
-        id_tarefa, caminho_arquivo = await create_job(id_usuario, bytes_arquivo, nome_arquivo_seguro)
+        id_tarefa, caminho_arquivo = await create_job(id_usuario, file.file, nome_arquivo_seguro)
     except Exception as excecao:
         log_audit_event(id_usuario, "UPLOAD", nome_arquivo_seguro, ip_cliente, id_requisicao, "failure", f"Erro de DB: {str(excecao)}")
         raise HTTPException(status_code=503, detail=f"Erro de DB: {str(excecao)}")
     
-    # 3. Inicia o background task no event loop corrente.
-    #    create_task() agenda no loop do Uvicorn, garantindo acesso ao pool asyncpg.
-    tarefa = asyncio.get_running_loop().create_task(start_job(id_tarefa, caminho_arquivo, id_usuario))
-
-    def _ao_concluir_tarefa(t: asyncio.Task):
-        if t.cancelled():
-            logger.warning(f"Background task da tarefa {id_tarefa} foi cancelada.")
-        elif t.exception():
-            logger.error(f"Background task da tarefa {id_tarefa} terminou com exceção: {t.exception()}")
-    tarefa.add_done_callback(_ao_concluir_tarefa)
+    # 3. Inicia o background task via FastAPI de forma segura
+    background_tasks.add_task(start_job, id_tarefa, caminho_arquivo, id_usuario)
     
     # 4. Auditoria LGPD
     log_audit_event(id_usuario, "UPLOAD", nome_arquivo_seguro, ip_cliente, id_requisicao, "success", f"Job ID: {id_tarefa}")

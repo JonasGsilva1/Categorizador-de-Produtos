@@ -57,21 +57,21 @@ async def submit_feedback(
             detail="Formato inválido. Envie um arquivo .xlsx.",
         )
 
-    bytes_arquivo = await file.read()
-    if len(bytes_arquivo) == 0:
-        raise HTTPException(status_code=400, detail="Arquivo vazio.")
-
-    # Validação Anti-Malware (Magic Bytes)
-    if len(bytes_arquivo) < 4 or not bytes_arquivo.startswith(b"PK\x03\x04"):
+    # Validação Anti-Malware (Magic Bytes) sem carregar o arquivo inteiro
+    assinatura = file.file.read(4)
+    file.file.seek(0)
+    if len(assinatura) < 4 or not assinatura.startswith(b"PK\x03\x04"):
         log_audit_event(id_usuario, "FEEDBACK", nome_arquivo_seguro, ip_cliente, id_requisicao, "failure", "Falha de Magic Bytes")
         raise HTTPException(
             status_code=415,
             detail="Arquivo corrompido ou malicioso. Apenas formatos XLSX reais são permitidos.",
         )
 
-    # --- Leitura da planilha ---
+    # --- Leitura da planilha em ThreadPool ---
+    import asyncio
     try:
-        linhas = read_feedback_products(bytes_arquivo)
+        # Pandas é síncrono e CPU-bound, então o rodamos em uma thread separada passando o objeto file.file
+        linhas = await asyncio.to_thread(read_feedback_products, file.file)
     except ValueError as erro_valor:
         raise HTTPException(status_code=400, detail=str(erro_valor))
     except Exception as excecao:

@@ -9,13 +9,15 @@ import pandas as pd
 from app.models import ProdutoEntrada, ProdutoSaida
 
 
-def read_products(bytes_arquivo: bytes) -> list[ProdutoEntrada]:
+from typing import BinaryIO
+
+def read_products(file_obj: BinaryIO) -> list[ProdutoEntrada]:
     """
     Lê a planilha .xlsx usando Pandas e extrai os produtos.
     Espera colunas: Descrição, EAN, NCM (insensível a maiúsculas/minúsculas).
     Retorna lista de ProdutoEntrada com o índice da linha.
     """
-    df = pd.read_excel(io.BytesIO(bytes_arquivo), engine="openpyxl")
+    df = pd.read_excel(file_obj, engine="openpyxl")
     df.columns = df.columns.astype(str).str.strip().str.lower().str.replace("_", " ")
 
     apelidos_cabecalho = {
@@ -66,11 +68,11 @@ def read_products(bytes_arquivo: bytes) -> list[ProdutoEntrada]:
     return produtos
 
 
-def read_feedback_products(bytes_arquivo: bytes) -> list[dict]:
+def read_feedback_products(file_obj: BinaryIO) -> list[dict]:
     """
     Lê a planilha de retroalimentação (corrigida manualmente) via Pandas.
     """
-    df = pd.read_excel(io.BytesIO(bytes_arquivo), engine="openpyxl")
+    df = pd.read_excel(file_obj, engine="openpyxl")
     df.columns = df.columns.astype(str).str.strip().str.lower().str.replace("_", " ")
 
     apelidos_cabecalho = {
