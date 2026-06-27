@@ -60,6 +60,58 @@ const OPCAO_PERSONALIZADO = '__personalizado__';
 const OPCOES_POR_PAGINA = [25, 50, 100];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Motor de sugestões por similaridade de palavras
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STOPWORDS = new Set([
+  'de','do','da','dos','das','em','no','na','nos','nas','um','uma','uns','umas',
+  'o','a','os','as','e','ou','com','para','por','que','se','ao','à','pelo','pela',
+  'mais','menos','muito','pouco','bem','mal','já','ainda','aqui','ali','lá',
+  'este','esta','esse','essa','isso','isto','aquilo','meu','minha','seu','sua',
+  'ele','ela','nós','eles','elas','todo','toda','todos','todas','cada','outro',
+  'outra','outros','outras','mesmo','mesma','qual','quais','como','quando',
+  'onde','porque','pois','mas','porém','entre','sobre','sob','até','após',
+  'ante','contra','desde','sem','tipo','kit','pct','cx','un','und','pc','pç',
+  'c','p','s','x','ml','lt','gr','kg','cm','mm','mt','und','unid','pacote',
+]);
+
+function tokenizar(texto: string): Set<string> {
+  const tokens = new Set<string>();
+  const palavras = texto
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // remove acentos
+    .replace(/[^a-z0-9\s]/g, ' ')   // remove pontuação
+    .split(/\s+/);
+  
+  palavras.forEach(p => {
+    if (p.length >= 2 && !STOPWORDS.has(p)) {
+      tokens.add(p);
+    }
+  });
+  return tokens;
+}
+
+function calcularSimilaridade(tokensA: Set<string>, tokensB: Set<string>): number {
+  if (tokensA.size === 0 || tokensB.size === 0) return 0;
+  let intersecao = 0;
+  Array.from(tokensA).forEach(t => {
+    if (tokensB.has(t)) intersecao++;
+  });
+  const uniao = tokensA.size + tokensB.size - intersecao;
+  return uniao > 0 ? intersecao / uniao : 0;
+}
+
+interface Sugestao {
+  grupo: string;
+  subgrupo: string;
+  similaridade: number;
+  descricaoRef: string;
+}
+
+const SIMILARIDADE_MINIMA = 0.25;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Componente principal de revisão
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -157,6 +209,72 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
 
   const obterGrupo = (item: ItemResultado) => edicoes[item.row_index]?.grupo ?? item.grupo;
   const obterSubgrupo = (item: ItemResultado) => edicoes[item.row_index]?.subgrupo ?? item.subgrupo;
+
+  // ── Motor de sugestões ──────────────────────────────────────────────────
+  // Pré-computa tokens dos itens aprovados (originais + editados pelo usuário)
+  const sugestoes = useMemo<Record<number, Sugestao>>(() => {
+    // Itens de referência = aprovados originais + itens com edição do usuário
+    const itensReferencia: Array<{ descricao: string; tokens: Set<string>; grupo: string; subgrupo: string }> = [];
+
+    for (const item of resultados) {
+      const edicao = edicoes[item.row_index];
+      const grupo = edicao?.grupo ?? item.grupo;
+      const subgrupo = edicao?.subgrupo ?? item.subgrupo;
+
+      // Se é aprovado OU tem edição com grupo/subgrupo definido, é referência
+      const ehReferencia = item.status === 'Aprovado' || (edicao && grupo && subgrupo);
+      if (ehReferencia && grupo && subgrupo) {
+        itensReferencia.push({
+          descricao: item.descricao,
+          tokens: tokenizar(item.descricao),
+          grupo,
+          subgrupo,
+        });
+      }
+    }
+
+    if (itensReferencia.length === 0) return {};
+
+    const mapa: Record<number, Sugestao> = {};
+
+    for (const item of resultados) {
+      // Só sugerir para pendentes que ainda não foram editados
+      if (item.status !== 'Pendente de Revisão') continue;
+      if (edicoes[item.row_index]) continue;
+
+      const tokensPendente = tokenizar(item.descricao);
+      let melhorSim = 0;
+      let melhorRef: typeof itensReferencia[0] | null = null;
+
+      for (const ref of itensReferencia) {
+        const sim = calcularSimilaridade(tokensPendente, ref.tokens);
+        if (sim > melhorSim) {
+          melhorSim = sim;
+          melhorRef = ref;
+        }
+      }
+
+      if (melhorRef && melhorSim >= SIMILARIDADE_MINIMA) {
+        mapa[item.row_index] = {
+          grupo: melhorRef.grupo,
+          subgrupo: melhorRef.subgrupo,
+          similaridade: melhorSim,
+          descricaoRef: melhorRef.descricao,
+        };
+      }
+    }
+
+    return mapa;
+  }, [resultados, edicoes]);
+
+  const aplicarSugestao = useCallback((rowIndex: number) => {
+    const sug = sugestoes[rowIndex];
+    if (!sug) return;
+    setEdicoes(anterior => ({
+      ...anterior,
+      [rowIndex]: { grupo: sug.grupo, subgrupo: sug.subgrupo },
+    }));
+  }, [sugestoes]);
 
   const editarCampo = useCallback((rowIndex: number, campo: 'grupo' | 'subgrupo', valor: string) => {
     setEdicoes(anterior => {
@@ -552,6 +670,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                 const subgrupoAtual = obterSubgrupo(item);
                 const editado = !!edicoes[item.row_index];
                 const selecionado = selecionados.has(item.row_index);
+                const sugestao = sugestoes[item.row_index];
 
                 return (
                   <tr 
@@ -574,6 +693,22 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                       <div className="review-desc-ean-mobile">
                         EAN: {item.ean || '-'} · NCM: {item.ncm || '-'}
                       </div>
+                      {/* Sugestão baseada em similaridade */}
+                      {sugestao && (
+                        <button
+                          className="review-suggestion-pill"
+                          onClick={() => aplicarSugestao(item.row_index)}
+                          title={`Similar a: "${sugestao.descricaoRef}" (${Math.round(sugestao.similaridade * 100)}% similar)`}
+                        >
+                          <span className="review-suggestion-icon">💡</span>
+                          <span className="review-suggestion-text">
+                            {sugestao.grupo} › {sugestao.subgrupo}
+                          </span>
+                          <span className="review-suggestion-score">
+                            {Math.round(sugestao.similaridade * 100)}%
+                          </span>
+                        </button>
+                      )}
                     </td>
                     <td className="review-td-ean">
                       EAN: {item.ean || '-'}<br />
@@ -658,6 +793,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
               const subgrupoAtual = obterSubgrupo(item);
               const editado = !!edicoes[item.row_index];
               const selecionado = selecionados.has(item.row_index);
+              const sugestao = sugestoes[item.row_index];
 
               return (
                 <div 
@@ -677,6 +813,23 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                       </span>
                     </div>
                   </div>
+
+                  {/* Sugestão no card mobile */}
+                  {sugestao && (
+                    <button
+                      className="review-suggestion-pill"
+                      onClick={() => aplicarSugestao(item.row_index)}
+                      title={`Similar a: "${sugestao.descricaoRef}"`}
+                    >
+                      <span className="review-suggestion-icon">💡</span>
+                      <span className="review-suggestion-text">
+                        {sugestao.grupo} › {sugestao.subgrupo}
+                      </span>
+                      <span className="review-suggestion-score">
+                        {Math.round(sugestao.similaridade * 100)}%
+                      </span>
+                    </button>
+                  )}
 
                   <div className="review-card-codes">
                     <span>EAN: {item.ean || '-'}</span>
