@@ -1425,7 +1425,154 @@ body::before {
   box-shadow: none;
 }
 
-/* ================================================================= */
+/* --- Taxonomy Editor Modal --- */
+.review-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  animation: fadeIn 0.2s ease-out;
+}
+
+.review-editor-modal {
+  width: min(600px, 100%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 15, 35, 0.98);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.7), 0 0 40px rgba(102, 126, 234, 0.1);
+  overflow: hidden;
+  animation: fadeSlideUp 0.3s ease-out;
+}
+
+.review-editor-header {
+  position: relative;
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.review-editor-header h3 {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  margin: 0 0 var(--space-1);
+  color: var(--text-primary);
+}
+
+.review-editor-header p {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.review-editor-close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.review-editor-close:hover {
+  background: rgba(245, 87, 108, 0.1);
+  border-color: rgba(245, 87, 108, 0.3);
+  color: var(--text-error);
+}
+
+.review-editor-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.review-editor-group {
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.review-editor-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  background: rgba(102, 126, 234, 0.06);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.review-editor-group-name {
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+  color: var(--text-accent);
+}
+
+.review-editor-rename-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.review-editor-rename-btn:hover {
+  background: rgba(167, 139, 250, 0.15);
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
+.review-editor-rename-btn.small {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.review-editor-subgroups {
+  padding: var(--space-2) var(--space-4);
+}
+
+.review-editor-subgroup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-2);
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  transition: background var(--transition-fast);
+}
+
+.review-editor-subgroup:hover {
+  background: var(--bg-glass);
+}
+
+/* =================================================================
+ */
 /* REVIEW PANEL — Responsive Breakpoints                             */
 /* ================================================================= */
 

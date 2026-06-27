@@ -155,31 +155,146 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     }
   });
 
-  // Persistir grupos personalizados no localStorage sempre que mudarem
-  useEffect(() => {
-    if (Object.keys(gruposPersonalizados).length > 0) {
-      try {
-        localStorage.setItem('categorizador-grupos-personalizados', JSON.stringify(gruposPersonalizados));
-      } catch { /* ignore quota errors */ }
+  // ── Renomeações de grupos/subgrupos persistidas ───────────────────────
+  const [renomeacoes, setRenomeacoes] = useState<{
+    grupos: Record<string, string>;
+    subgrupos: Record<string, Record<string, string>>;
+  }>(() => {
+    if (typeof window === 'undefined') return { grupos: {}, subgrupos: {} };
+    try {
+      const salvo = localStorage.getItem('categorizador-renomeacoes');
+      return salvo ? JSON.parse(salvo) : { grupos: {}, subgrupos: {} };
+    } catch {
+      return { grupos: {}, subgrupos: {} };
     }
+  });
+
+  // ── Editor de taxonomia ───────────────────────────────────────────────
+  const [mostrarEditor, setMostrarEditor] = useState(false);
+
+  // Persistir dados no localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('categorizador-grupos-personalizados', JSON.stringify(gruposPersonalizados));
+    } catch { /* ignore */ }
   }, [gruposPersonalizados]);
 
-  // Taxonomia completa = pré-definida + personalizados (merge de subgrupos)
+  useEffect(() => {
+    try {
+      localStorage.setItem('categorizador-renomeacoes', JSON.stringify(renomeacoes));
+    } catch { /* ignore */ }
+  }, [renomeacoes]);
+
+  // Taxonomia completa = pré-definida + personalizados + renomeações aplicadas
   const taxonomiaCompleta = useMemo<Record<string, string[]>>(() => {
-    const merged: Record<string, string[]> = { ...TAXONOMIA };
+    // 1. Merge pré-definidos + personalizados
+    const base: Record<string, string[]> = { ...TAXONOMIA };
     Object.entries(gruposPersonalizados).forEach(([grupo, subgrupos]) => {
-      const existentes = merged[grupo] ?? [];
-      // Combina subgrupos pré-definidos + personalizados, sem duplicatas
+      const existentes = base[grupo] ?? [];
       const combinados = [...existentes];
       subgrupos.forEach(s => {
         if (!combinados.includes(s)) combinados.push(s);
       });
-      merged[grupo] = combinados;
+      base[grupo] = combinados;
     });
-    return merged;
-  }, [gruposPersonalizados]);
+
+    // 2. Aplicar renomeações de subgrupos
+    const comSubRenomeados: Record<string, string[]> = {};
+    Object.entries(base).forEach(([grupo, subs]) => {
+      const mapaSub = renomeacoes.subgrupos[grupo] ?? {};
+      comSubRenomeados[grupo] = subs.map(s => mapaSub[s] ?? s);
+    });
+
+    // 3. Aplicar renomeações de grupos
+    const final: Record<string, string[]> = {};
+    Object.entries(comSubRenomeados).forEach(([grupo, subs]) => {
+      const novoNome = renomeacoes.grupos[grupo] ?? grupo;
+      if (final[novoNome]) {
+        // Merge se o novo nome já existe
+        subs.forEach(s => {
+          if (!final[novoNome].includes(s)) final[novoNome].push(s);
+        });
+      } else {
+        final[novoNome] = subs;
+      }
+    });
+
+    return final;
+  }, [gruposPersonalizados, renomeacoes]);
 
   const todosOsGrupos = useMemo(() => Object.keys(taxonomiaCompleta), [taxonomiaCompleta]);
+
+  // ── Funções de renomear ──────────────────────────────────────────────
+  const renomearGrupo = useCallback((nomeAtual: string) => {
+    const novoNome = prompt(`Renomear grupo "${nomeAtual}" para:`, nomeAtual);
+    if (!novoNome || novoNome.trim() === '' || novoNome.trim() === nomeAtual) return;
+    const limpo = novoNome.trim();
+
+    // Encontrar o nome original (pode já ter sido renomeado antes)
+    let nomeOriginal = nomeAtual;
+    Object.entries(renomeacoes.grupos).forEach(([orig, ren]) => {
+      if (ren === nomeAtual) nomeOriginal = orig;
+    });
+
+    setRenomeacoes(ant => ({
+      ...ant,
+      grupos: { ...ant.grupos, [nomeOriginal]: limpo },
+    }));
+
+    // Atualizar edições existentes que usam o nome antigo
+    setEdicoes(ant => {
+      const novas: Record<number, EdicaoItem> = {};
+      Object.entries(ant).forEach(([idx, ed]) => {
+        novas[parseInt(idx)] = {
+          grupo: ed.grupo === nomeAtual ? limpo : ed.grupo,
+          subgrupo: ed.subgrupo,
+        };
+      });
+      return novas;
+    });
+  }, [renomeacoes]);
+
+  const renomearSubgrupo = useCallback((nomeGrupo: string, subAtual: string) => {
+    const novoNome = prompt(`Renomear subgrupo "${subAtual}" para:`, subAtual);
+    if (!novoNome || novoNome.trim() === '' || novoNome.trim() === subAtual) return;
+    const limpo = novoNome.trim();
+
+    // Encontrar grupo original
+    let grupoOriginal = nomeGrupo;
+    Object.entries(renomeacoes.grupos).forEach(([orig, ren]) => {
+      if (ren === nomeGrupo) grupoOriginal = orig;
+    });
+
+    // Encontrar subgrupo original
+    let subOriginal = subAtual;
+    const mapaSub = renomeacoes.subgrupos[grupoOriginal] ?? {};
+    Object.entries(mapaSub).forEach(([orig, ren]) => {
+      if (ren === subAtual) subOriginal = orig;
+    });
+
+    setRenomeacoes(ant => ({
+      ...ant,
+      subgrupos: {
+        ...ant.subgrupos,
+        [grupoOriginal]: {
+          ...(ant.subgrupos[grupoOriginal] ?? {}),
+          [subOriginal]: limpo,
+        },
+      },
+    }));
+
+    // Atualizar edições existentes
+    setEdicoes(ant => {
+      const novas: Record<number, EdicaoItem> = {};
+      Object.entries(ant).forEach(([idx, ed]) => {
+        novas[parseInt(idx)] = {
+          grupo: ed.grupo,
+          subgrupo: (ed.grupo === nomeGrupo && ed.subgrupo === subAtual) ? limpo : ed.subgrupo,
+        };
+      });
+      return novas;
+    });
+  }, [renomeacoes]);
 
   // Carregar resultados do backend
   useEffect(() => {
@@ -527,6 +642,9 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
             <option value="pendentes">Mostrar Pendentes</option>
             <option value="todos">Mostrar Todos</option>
           </select>
+          <button onClick={() => setMostrarEditor(true)} className="review-btn-back" title="Editar nomes de grupos e subgrupos">
+            ⚙️ Taxonomia
+          </button>
           <button onClick={aoVoltar} className="review-btn-back">
             ← Voltar
           </button>
@@ -949,6 +1067,49 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
             >
               Próxima ›
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Editor de Taxonomia (Modal) ═══ */}
+      {mostrarEditor && (
+        <div className="review-editor-overlay" onClick={() => setMostrarEditor(false)}>
+          <div className="review-editor-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="review-editor-header">
+              <h3>⚙️ Editor de Taxonomia</h3>
+              <p>Clique no ✏️ para renomear grupos ou subgrupos</p>
+              <button className="review-editor-close" onClick={() => setMostrarEditor(false)}>✕</button>
+            </div>
+            <div className="review-editor-body">
+              {todosOsGrupos.map(grupo => (
+                <div key={grupo} className="review-editor-group">
+                  <div className="review-editor-group-header">
+                    <span className="review-editor-group-name">{grupo}</span>
+                    <button
+                      className="review-editor-rename-btn"
+                      onClick={() => renomearGrupo(grupo)}
+                      title={`Renomear grupo "${grupo}"`}
+                    >
+                      ✏️
+                    </button>
+                  </div>
+                  <div className="review-editor-subgroups">
+                    {(taxonomiaCompleta[grupo] || []).map(sub => (
+                      <div key={sub} className="review-editor-subgroup">
+                        <span>{sub}</span>
+                        <button
+                          className="review-editor-rename-btn small"
+                          onClick={() => renomearSubgrupo(grupo, sub)}
+                          title={`Renomear subgrupo "${sub}"`}
+                        >
+                          ✏️
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

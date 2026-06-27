@@ -244,22 +244,29 @@ export default function DebugPanel({ logs, onClear }: PropsPainelDebug) {
               </button>
               <button
                 onClick={() => setAberto(false)}
-                title="Minimizar"
+                title="Fechar painel"
                 style={{
-                  padding: '0.25rem 0.45rem',
+                  padding: '0.25rem 0.5rem',
                   fontSize: '0.7rem',
-                  border: 'none',
+                  fontWeight: 700,
+                  border: '1px solid rgba(245, 87, 108, 0.3)',
                   borderRadius: '4px',
                   cursor: 'pointer',
                   fontFamily: 'inherit',
-                  background: 'transparent',
-                  color: 'rgba(255,255,255,0.3)',
+                  background: 'rgba(245, 87, 108, 0.1)',
+                  color: '#f5576c',
                   transition: 'all 150ms',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#e8e8f0')}
-                onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.3)')}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(245, 87, 108, 0.25)';
+                  e.currentTarget.style.borderColor = '#f5576c';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(245, 87, 108, 0.1)';
+                  e.currentTarget.style.borderColor = 'rgba(245, 87, 108, 0.3)';
+                }}
               >
-                ─
+                ✕ Fechar
               </button>
             </div>
           </div>
