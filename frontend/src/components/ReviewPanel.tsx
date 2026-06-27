@@ -57,6 +57,8 @@ const TAXONOMIA: Record<string, string[]> = {
 
 const OPCAO_PERSONALIZADO = '__personalizado__';
 
+const OPCOES_POR_PAGINA = [25, 50, 100];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Componente principal de revisão
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +75,10 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
   // ── Filtro e busca da tabela ─────────────────────────────────────────────
   const [filtro, setFiltro]   = useState<'pendentes' | 'todos'>('pendentes');
   const [busca, setBusca]     = useState('');
+
+  // ── Paginação ───────────────────────────────────────────────────────────
+  const [paginaAtual, setPaginaAtual]       = useState(1);
+  const [itensPorPagina, setItensPorPagina] = useState(25);
 
   // ── Edições individuais: row_index → {grupo, subgrupo} ──────────────────
   const [edicoes, setEdicoes] = useState<Record<number, EdicaoItem>>({});
@@ -118,7 +124,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     carregarResultados();
   }, [jobId, session]);
 
-  // Itens filtrados
+  // Itens filtrados (sem paginação)
   const itensFiltrados = useMemo(() => {
     let lista = filtro === 'pendentes'
       ? resultados.filter(r => r.status === 'Pendente de Revisão')
@@ -130,6 +136,21 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     }
     return lista;
   }, [resultados, filtro, busca]);
+
+  // ── Paginação calculada ──────────────────────────────────────────────────
+  const totalPaginas = Math.max(1, Math.ceil(itensFiltrados.length / itensPorPagina));
+
+  // Reseta para página 1 quando filtro/busca/itensPorPagina mudam
+  useEffect(() => {
+    setPaginaAtual(1);
+  }, [filtro, busca, itensPorPagina]);
+
+  // Itens da página atual
+  const itensPaginados = useMemo(() => {
+    const inicio = (paginaAtual - 1) * itensPorPagina;
+    const fim = inicio + itensPorPagina;
+    return itensFiltrados.slice(inicio, fim);
+  }, [itensFiltrados, paginaAtual, itensPorPagina]);
 
   const totalPendentes  = resultados.filter(r => r.status === 'Pendente de Revisão').length;
   const totalAprovados  = resultados.filter(r => r.status === 'Aprovado').length;
@@ -163,7 +184,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
   }, []);
 
   const alternarSelecaoTodos = useCallback(() => {
-    const indicesVisiveis = itensFiltrados.map(i => i.row_index);
+    const indicesVisiveis = itensPaginados.map(i => i.row_index);
     const todosSelecionados = indicesVisiveis.length > 0 && indicesVisiveis.every(idx => selecionados.has(idx));
 
     setSelecionados(anterior => {
@@ -175,7 +196,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
       }
       return nova;
     });
-  }, [itensFiltrados, selecionados]);
+  }, [itensPaginados, selecionados]);
 
   const alternarSelecaoItem = useCallback((rowIndex: number) => {
     setSelecionados(anterior => {
@@ -289,95 +310,171 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     alert(`${selecionados.size} itens foram alterados localmente. Lembre-se de salvar!`);
   };
 
+  // ── Gera números de página para exibir (com elipses) ──────────────────
+  const gerarNumerosPagina = (): (number | '...')[] => {
+    if (totalPaginas <= 7) {
+      return Array.from({ length: totalPaginas }, (_, i) => i + 1);
+    }
+
+    const paginas: (number | '...')[] = [1];
+
+    if (paginaAtual > 3) paginas.push('...');
+
+    const inicio = Math.max(2, paginaAtual - 1);
+    const fim = Math.min(totalPaginas - 1, paginaAtual + 1);
+
+    for (let i = inicio; i <= fim; i++) {
+      paginas.push(i);
+    }
+
+    if (paginaAtual < totalPaginas - 2) paginas.push('...');
+
+    paginas.push(totalPaginas);
+    return paginas;
+  };
+
   if (carregando) {
     return (
-      <div style={{ color: 'white', padding: '2rem', textAlign: 'center' }}>
+      <div className="review-loading">
+        <div className="review-loading-spinner"></div>
         <h2>Carregando resultados da revisão...</h2>
       </div>
     );
   }
 
-  // ── Renderização da Interface Premium ────────────────────────────────────
+  const indiceInicio = (paginaAtual - 1) * itensPorPagina + 1;
+  const indiceFim = Math.min(paginaAtual * itensPorPagina, itensFiltrados.length);
+
+  // ── Renderização da Interface ────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', color: 'white', width: '100%' }}>
+    <div className="review-panel">
       
-      {/* Cabeçalho de Métricas e Controles */}
-      <div style={{ 
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px',
-        background: 'var(--bg-card)', padding: '20px', borderRadius: '12px', border: '1px solid var(--bg-glass)'
-      }}>
-        <div style={{ display: 'flex', gap: '20px' }}>
-          <div>
-            <span style={{ fontSize: '0.85rem', color: '#aaa' }}>Pendentes</span>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#ff9800' }}>{totalPendentes}</div>
+      {/* ═══ Cabeçalho com Métricas ═══ */}
+      <div className="review-header">
+        <div className="review-metrics">
+          <div className="review-metric">
+            <span className="review-metric-label">Pendentes</span>
+            <span className="review-metric-value warning">{totalPendentes}</span>
           </div>
-          <div>
-            <span style={{ fontSize: '0.85rem', color: '#aaa' }}>Aprovados</span>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#4caf50' }}>{totalAprovados}</div>
+          <div className="review-metric">
+            <span className="review-metric-label">Aprovados</span>
+            <span className="review-metric-value success">{totalAprovados}</span>
+          </div>
+          <div className="review-metric">
+            <span className="review-metric-label">Total</span>
+            <span className="review-metric-value">{resultados.length}</span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+        <div className="review-controls">
           <input 
             type="text" 
-            placeholder="Buscar por descrição..." 
+            placeholder="🔍 Buscar por descrição..." 
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
-            style={{ 
-              padding: '10px 15px', borderRadius: '8px', border: '1px solid var(--bg-glass)', 
-              background: 'var(--bg-tertiary)', color: 'white', minWidth: '250px'
-            }}
+            className="review-search"
           />
           <select 
             value={filtro} 
             onChange={(e) => setFiltro(e.target.value as any)}
-            style={{ 
-              padding: '10px 15px', borderRadius: '8px', border: '1px solid var(--bg-glass)', 
-              background: 'var(--bg-tertiary)', color: 'white'
-            }}
+            className="review-select"
           >
             <option value="pendentes">Mostrar Pendentes</option>
             <option value="todos">Mostrar Todos</option>
           </select>
-          <button 
-            onClick={aoVoltar}
-            style={{ 
-              padding: '10px 20px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-              background: 'var(--bg-glass)', color: 'white', fontWeight: 'bold'
-            }}
-          >
-            Voltar
+          <button onClick={aoVoltar} className="review-btn-back">
+            ← Voltar
           </button>
         </div>
       </div>
 
       {erro && (
-        <div style={{ background: '#f4433622', color: '#f44336', padding: '15px', borderRadius: '8px', border: '1px solid #f44336' }}>
-          {erro}
+        <div className="review-error">
+          ⚠️ {erro}
         </div>
       )}
 
-      {/* Painel de Alteração em Massa */}
+      {/* ═══ Barra de Paginação Superior ═══ */}
+      <div className="review-pagination-bar">
+        <div className="review-pagination-info">
+          <span className="review-pagination-showing">
+            Exibindo <strong>{itensFiltrados.length > 0 ? indiceInicio : 0}</strong>–<strong>{indiceFim}</strong> de <strong>{itensFiltrados.length}</strong> itens
+          </span>
+          {selecionados.size > 0 && (
+            <span className="review-pagination-selected">
+              ({selecionados.size} selecionado{selecionados.size > 1 ? 's' : ''})
+            </span>
+          )}
+        </div>
+
+        <div className="review-pagination-controls">
+          <label className="review-per-page-label">
+            Por página:
+            <select
+              value={itensPorPagina}
+              onChange={(e) => setItensPorPagina(Number(e.target.value))}
+              className="review-per-page-select"
+            >
+              {OPCOES_POR_PAGINA.map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+
+          <div className="review-page-tabs">
+            <button
+              className="review-page-btn"
+              disabled={paginaAtual === 1}
+              onClick={() => setPaginaAtual(p => Math.max(1, p - 1))}
+              aria-label="Página anterior"
+            >
+              ‹
+            </button>
+
+            {gerarNumerosPagina().map((num, idx) =>
+              num === '...' ? (
+                <span key={`dots-${idx}`} className="review-page-dots">…</span>
+              ) : (
+                <button
+                  key={num}
+                  className={`review-page-btn ${paginaAtual === num ? 'active' : ''}`}
+                  onClick={() => setPaginaAtual(num)}
+                >
+                  {num}
+                </button>
+              )
+            )}
+
+            <button
+              className="review-page-btn"
+              disabled={paginaAtual === totalPaginas}
+              onClick={() => setPaginaAtual(p => Math.min(totalPaginas, p + 1))}
+              aria-label="Próxima página"
+            >
+              ›
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ Painel de Alteração em Massa ═══ */}
       {selecionados.size > 0 && (
-        <div style={{ 
-          background: 'linear-gradient(145deg, rgba(30,60,120,0.4), rgba(20,40,80,0.4))', 
-          padding: '20px', borderRadius: '12px', border: '1px solid var(--bg-glass)',
-          display: 'flex', flexDirection: 'column', gap: '15px'
-        }}>
-          <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Alteração em Massa ({selecionados.size} selecionados)</h3>
+        <div className="review-bulk-panel">
+          <h3 className="review-bulk-title">
+            ✏️ Alteração em Massa ({selecionados.size} selecionado{selecionados.size > 1 ? 's' : ''})
+          </h3>
           
-          <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-            {/* Seletor de Grupo para Massa */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={{ fontSize: '0.85rem', color: '#ccc' }}>Grupo</label>
+          <div className="review-bulk-fields">
+            <div className="review-bulk-field">
+              <label>Grupo</label>
               <select 
                 value={grupoPainelMassa} 
                 onChange={(e) => {
                   setGrupoPainelMassa(e.target.value);
                   setSubgrupoPainelMassa('');
                 }}
-                style={{ padding: '8px', borderRadius: '6px', background: 'var(--bg-tertiary)', color: 'white', border: '1px solid var(--bg-glass)', minWidth: '200px' }}
+                className="review-select"
               >
                 <option value="">-- Selecione --</option>
                 {todosOsGrupos.map(g => <option key={g} value={g}>{g}</option>)}
@@ -387,19 +484,18 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                 <input 
                   type="text" placeholder="Nome do novo grupo" value={grupoPersonalizadoMassa}
                   onChange={(e) => setGrupoPersonalizadoMassa(e.target.value)}
-                  style={{ marginTop: '5px', padding: '8px', borderRadius: '6px', background: 'var(--bg-tertiary)', color: 'white', border: '1px solid var(--bg-glass)' }}
+                  className="review-input"
                 />
               )}
             </div>
 
-            {/* Seletor de Subgrupo para Massa */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={{ fontSize: '0.85rem', color: '#ccc' }}>Subgrupo</label>
+            <div className="review-bulk-field">
+              <label>Subgrupo</label>
               <select 
                 value={subgrupoPainelMassa} 
                 onChange={(e) => setSubgrupoPainelMassa(e.target.value)}
                 disabled={!grupoPainelMassa}
-                style={{ padding: '8px', borderRadius: '6px', background: 'var(--bg-tertiary)', color: 'white', border: '1px solid var(--bg-glass)', minWidth: '200px' }}
+                className="review-select"
               >
                 <option value="">-- Selecione --</option>
                 {grupoPainelMassa && grupoPainelMassa !== OPCAO_PERSONALIZADO && (taxonomiaCompleta[grupoPainelMassa] || []).map(s => (
@@ -411,19 +507,13 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                 <input 
                   type="text" placeholder="Nome do novo subgrupo" value={subgrupoPersonalizadoMassa}
                   onChange={(e) => setSubgrupoPersonalizadoMassa(e.target.value)}
-                  style={{ marginTop: '5px', padding: '8px', borderRadius: '6px', background: 'var(--bg-tertiary)', color: 'white', border: '1px solid var(--bg-glass)' }}
+                  className="review-input"
                 />
               )}
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: '2px' }}>
-              <button 
-                onClick={aplicarEdicaoEmMassa}
-                style={{ 
-                  padding: '10px 20px', borderRadius: '6px', border: 'none', cursor: 'pointer',
-                  background: '#2196f3', color: 'white', fontWeight: 'bold'
-                }}
-              >
+            <div className="review-bulk-action">
+              <button onClick={aplicarEdicaoEmMassa} className="review-btn-apply">
                 Aplicar aos Selecionados
               </button>
             </div>
@@ -431,60 +521,65 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
         </div>
       )}
 
-      {/* Tabela de Resultados */}
-      <div style={{ overflowX: 'auto', background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--bg-glass)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+      {/* ═══ Tabela de Resultados (desktop) / Cards (mobile) ═══ */}
+      <div className="review-table-wrapper">
+        <table className="review-table">
           <thead>
-            <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--bg-glass)' }}>
-              <th style={{ padding: '15px', width: '40px' }}>
+            <tr>
+              <th className="review-th-check">
                 <input 
                   type="checkbox" 
-                  checked={itensFiltrados.length > 0 && selecionados.size === itensFiltrados.length}
+                  checked={itensPaginados.length > 0 && itensPaginados.every(i => selecionados.has(i.row_index))}
                   onChange={alternarSelecaoTodos}
-                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
                 />
               </th>
-              <th style={{ padding: '15px' }}>Descrição Original</th>
-              <th style={{ padding: '15px' }}>EAN / NCM</th>
-              <th style={{ padding: '15px' }}>Grupo</th>
-              <th style={{ padding: '15px' }}>Subgrupo</th>
+              <th>Descrição Original</th>
+              <th className="review-th-ean">EAN / NCM</th>
+              <th>Grupo</th>
+              <th>Subgrupo</th>
             </tr>
           </thead>
           <tbody>
-            {itensFiltrados.length === 0 ? (
+            {itensPaginados.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ padding: '30px', textAlign: 'center', color: '#aaa' }}>
+                <td colSpan={5} className="review-empty">
                   Nenhum item encontrado.
                 </td>
               </tr>
             ) : (
-              itensFiltrados.map(item => {
+              itensPaginados.map(item => {
                 const grupoAtual = obterGrupo(item);
                 const subgrupoAtual = obterSubgrupo(item);
                 const editado = !!edicoes[item.row_index];
+                const selecionado = selecionados.has(item.row_index);
 
                 return (
-                  <tr key={item.row_index} style={{ 
-                    borderBottom: '1px solid var(--bg-glass)', 
-                    background: selecionados.has(item.row_index) ? 'rgba(33, 150, 243, 0.1)' : (editado ? 'rgba(76, 175, 80, 0.05)' : 'transparent')
-                  }}>
-                    <td style={{ padding: '15px' }}>
+                  <tr 
+                    key={item.row_index} 
+                    className={`review-row ${selecionado ? 'selected' : ''} ${editado ? 'edited' : ''}`}
+                  >
+                    <td className="review-td-check">
                       <input 
                         type="checkbox" 
-                        checked={selecionados.has(item.row_index)}
+                        checked={selecionado}
                         onChange={() => alternarSelecaoItem(item.row_index)}
-                        style={{ cursor: 'pointer', width: '16px', height: '16px' }}
                       />
                     </td>
-                    <td style={{ padding: '15px', maxWidth: '300px' }}>
-                      <div style={{ fontWeight: '500', marginBottom: '4px' }}>{item.descricao}</div>
-                      <div style={{ fontSize: '0.8rem', color: '#888' }}>Origem: {item.origem} | Status: {item.status}</div>
+                    <td className="review-td-desc">
+                      <div className="review-desc-text">{item.descricao}</div>
+                      <div className="review-desc-meta">
+                        Origem: {item.origem} | Status: {item.status}
+                      </div>
+                      {/* EAN/NCM inline on mobile */}
+                      <div className="review-desc-ean-mobile">
+                        EAN: {item.ean || '-'} · NCM: {item.ncm || '-'}
+                      </div>
                     </td>
-                    <td style={{ padding: '15px', color: '#aaa', fontSize: '0.85rem' }}>
+                    <td className="review-td-ean">
                       EAN: {item.ean || '-'}<br />
                       NCM: {item.ncm || '-'}
                     </td>
-                    <td style={{ padding: '15px' }}>
+                    <td className="review-td-select">
                       <select 
                         value={todosOsGrupos.includes(grupoAtual) ? grupoAtual : ''}
                         onChange={(e) => {
@@ -500,7 +595,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                             editarCampo(item.row_index, 'grupo', v);
                           }
                         }}
-                        style={{ padding: '6px', borderRadius: '4px', background: 'var(--bg-primary)', color: 'white', border: '1px solid #444', width: '100%' }}
+                        className="review-inline-select"
                       >
                         <option value="">-- Selecione --</option>
                         {todosOsGrupos.map(g => <option key={g} value={g}>{g}</option>)}
@@ -508,7 +603,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                         <option value={OPCAO_PERSONALIZADO}>+ Personalizado</option>
                       </select>
                     </td>
-                    <td style={{ padding: '15px' }}>
+                    <td className="review-td-select">
                       <select 
                         value={(taxonomiaCompleta[grupoAtual] || []).includes(subgrupoAtual) ? subgrupoAtual : ''}
                         onChange={(e) => {
@@ -524,7 +619,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                           }
                         }}
                         disabled={!grupoAtual}
-                        style={{ padding: '6px', borderRadius: '4px', background: 'var(--bg-primary)', color: 'white', border: '1px solid #444', width: '100%' }}
+                        className="review-inline-select"
                       >
                         <option value="">-- Selecione --</option>
                         {(taxonomiaCompleta[grupoAtual] || []).map(s => (
@@ -542,31 +637,160 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
         </table>
       </div>
 
-      {/* Rodapé: Ações Finais */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '15px', padding: '10px 0' }}>
+      {/* ═══ Cards layout (mobile only) ═══ */}
+      <div className="review-cards-mobile">
+        {itensPaginados.length === 0 ? (
+          <div className="review-empty-card">Nenhum item encontrado.</div>
+        ) : (
+          <>
+            <div className="review-cards-select-all">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={itensPaginados.length > 0 && itensPaginados.every(i => selecionados.has(i.row_index))}
+                  onChange={alternarSelecaoTodos}
+                />
+                Selecionar todos desta página
+              </label>
+            </div>
+            {itensPaginados.map(item => {
+              const grupoAtual = obterGrupo(item);
+              const subgrupoAtual = obterSubgrupo(item);
+              const editado = !!edicoes[item.row_index];
+              const selecionado = selecionados.has(item.row_index);
+
+              return (
+                <div 
+                  key={item.row_index} 
+                  className={`review-card ${selecionado ? 'selected' : ''} ${editado ? 'edited' : ''}`}
+                >
+                  <div className="review-card-header">
+                    <input 
+                      type="checkbox" 
+                      checked={selecionado}
+                      onChange={() => alternarSelecaoItem(item.row_index)}
+                    />
+                    <div className="review-card-desc">
+                      <strong>{item.descricao}</strong>
+                      <span className="review-card-meta">
+                        {item.origem} · {item.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="review-card-codes">
+                    <span>EAN: {item.ean || '-'}</span>
+                    <span>NCM: {item.ncm || '-'}</span>
+                  </div>
+
+                  <div className="review-card-selects">
+                    <div className="review-card-field">
+                      <label>Grupo</label>
+                      <select 
+                        value={todosOsGrupos.includes(grupoAtual) ? grupoAtual : ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === OPCAO_PERSONALIZADO) {
+                            const novoG = prompt('Digite o nome do novo Grupo:');
+                            if (novoG) {
+                              criarGrupoPersonalizado(novoG, 'Geral');
+                              editarCampo(item.row_index, 'grupo', novoG);
+                              editarCampo(item.row_index, 'subgrupo', 'Geral');
+                            }
+                          } else {
+                            editarCampo(item.row_index, 'grupo', v);
+                          }
+                        }}
+                        className="review-inline-select"
+                      >
+                        <option value="">-- Selecione --</option>
+                        {todosOsGrupos.map(g => <option key={g} value={g}>{g}</option>)}
+                        {!todosOsGrupos.includes(grupoAtual) && grupoAtual && <option value={grupoAtual}>{grupoAtual}</option>}
+                        <option value={OPCAO_PERSONALIZADO}>+ Personalizado</option>
+                      </select>
+                    </div>
+                    <div className="review-card-field">
+                      <label>Subgrupo</label>
+                      <select 
+                        value={(taxonomiaCompleta[grupoAtual] || []).includes(subgrupoAtual) ? subgrupoAtual : ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === OPCAO_PERSONALIZADO) {
+                            const novoS = prompt('Digite o nome do novo Subgrupo:');
+                            if (novoS && grupoAtual) {
+                              criarGrupoPersonalizado(grupoAtual, novoS);
+                              editarCampo(item.row_index, 'subgrupo', novoS);
+                            }
+                          } else {
+                            editarCampo(item.row_index, 'subgrupo', v);
+                          }
+                        }}
+                        disabled={!grupoAtual}
+                        className="review-inline-select"
+                      >
+                        <option value="">-- Selecione --</option>
+                        {(taxonomiaCompleta[grupoAtual] || []).map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                        {!(taxonomiaCompleta[grupoAtual] || []).includes(subgrupoAtual) && subgrupoAtual && <option value={subgrupoAtual}>{subgrupoAtual}</option>}
+                        {grupoAtual && <option value={OPCAO_PERSONALIZADO}>+ Personalizado</option>}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+
+      {/* ═══ Barra de Paginação Inferior ═══ */}
+      {itensFiltrados.length > 0 && (
+        <div className="review-pagination-bar bottom">
+          <div className="review-pagination-info">
+            <span className="review-pagination-showing">
+              Página <strong>{paginaAtual}</strong> de <strong>{totalPaginas}</strong>
+            </span>
+          </div>
+
+          <div className="review-page-tabs">
+            <button
+              className="review-page-btn"
+              disabled={paginaAtual === 1}
+              onClick={() => setPaginaAtual(p => Math.max(1, p - 1))}
+              aria-label="Página anterior"
+            >
+              ‹ Anterior
+            </button>
+            <button
+              className="review-page-btn"
+              disabled={paginaAtual === totalPaginas}
+              onClick={() => setPaginaAtual(p => Math.min(totalPaginas, p + 1))}
+              aria-label="Próxima página"
+            >
+              Próxima ›
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Rodapé: Ações Finais ═══ */}
+      <div className="review-footer">
         <button 
           onClick={() => salvarAlteracoes(false)}
           disabled={salvando || finalizando || Object.keys(edicoes).length === 0}
-          style={{ 
-            padding: '12px 25px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer',
-            background: 'transparent', color: 'white', fontWeight: 'bold',
-            opacity: (salvando || finalizando || Object.keys(edicoes).length === 0) ? 0.5 : 1
-          }}
+          className="review-btn-save"
         >
-          {salvando && !finalizando ? 'Salvando...' : 'Salvar Progresso'}
+          {salvando && !finalizando ? 'Salvando...' : `💾 Salvar Progresso${Object.keys(edicoes).length > 0 ? ` (${Object.keys(edicoes).length})` : ''}`}
         </button>
         
         <button 
           onClick={() => salvarAlteracoes(true)}
           disabled={salvando || finalizando || totalPendentes > Object.keys(edicoes).length}
           title={totalPendentes > Object.keys(edicoes).length ? 'Você precisa categorizar todos os itens pendentes antes de finalizar.' : ''}
-          style={{ 
-            padding: '12px 25px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(90deg, #4caf50, #2e7d32)', color: 'white', fontWeight: 'bold',
-            opacity: (salvando || finalizando || totalPendentes > Object.keys(edicoes).length) ? 0.5 : 1
-          }}
+          className="review-btn-finalize"
         >
-          {finalizando ? 'Finalizando...' : 'Finalizar Revisão'}
+          {finalizando ? 'Finalizando...' : '✅ Finalizar Revisão'}
         </button>
       </div>
 
