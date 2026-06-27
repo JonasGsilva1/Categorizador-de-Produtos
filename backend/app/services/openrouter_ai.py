@@ -78,11 +78,15 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
     async with httpx.AsyncClient(timeout=60.0) as client:
         for tentativa in range(1, max_tentativas + 1):
             try:
+                logger.info(f"Enviando lote de {len(lote_produtos)} itens para OpenRouter (Tentativa {tentativa}). Payload preview: {json.dumps(payload)[:200]}...")
                 response = await client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers=headers,
                     json=payload
                 )
+                
+                if response.status_code != 200:
+                    logger.error(f"OpenRouter falhou com status {response.status_code}. Resposta: {response.text}")
                 
                 if response.status_code == 429:
                     atraso = atraso_base * tentativa
@@ -93,7 +97,12 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
                 response.raise_for_status()
                 data = response.json()
                 
+                if "choices" not in data or not data["choices"]:
+                    logger.error(f"Estrutura inesperada na resposta do OpenRouter: {json.dumps(data)}")
+                    return {}
+
                 content = data["choices"][0]["message"]["content"].strip()
+                logger.debug(f"OpenRouter respondeu: {content[:300]}...")
                 
                 # Remover block markdown de código se a IA insistir em adicionar
                 if content.startswith("```json"):
@@ -113,10 +122,10 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
                         if isinstance(resultado_json, list):
                             produtos_raw = resultado_json
                         else:
-                            logger.error("A chave 'produtos' não é uma lista ou não foi encontrada.")
+                            logger.error(f"A chave 'produtos' não é uma lista. JSON: {content}")
                             produtos_raw = []
                 except json.JSONDecodeError as erro_json:
-                    logger.error(f"Resposta não é JSON válido: {erro_json}. Conteúdo: {content[:200]}")
+                    logger.error(f"Resposta não é JSON válido: {erro_json}. Conteúdo completo: {content}")
                     if tentativa < max_tentativas:
                         await asyncio.sleep(atraso_base)
                         continue
@@ -141,20 +150,22 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
                                 subgrupo=subgrupo,
                                 grau_de_confianca=min(100, max(0, confianca))
                             )
-                    except (ValueError, TypeError):
-                        pass
+                        else:
+                             logger.warning(f"Item {id_linha} ignorado por grupo/subgrupo vazios: {item}")
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Falha ao interpretar item {item}: {e}")
 
-                logger.info(f"OpenRouter: Lote processado. {len(mapeamento)}/{len(lote_produtos)} classificados.")
+                logger.info(f"OpenRouter: Lote processado com sucesso. {len(mapeamento)}/{len(lote_produtos)} classificados válidos.")
                 return mapeamento
 
             except httpx.HTTPError as erro_http:
-                logger.error(f"Erro HTTP OpenRouter: {erro_http}")
+                logger.error(f"Erro HTTP OpenRouter: {erro_http}. Resposta (se houver): {getattr(erro_http, 'response', 'Sem resposta')}")
                 if tentativa < max_tentativas:
                     await asyncio.sleep(atraso_base * tentativa)
                 else:
                     return {}
             except Exception as e:
-                logger.error(f"Erro inesperado na chamada OpenRouter: {e}")
+                logger.error(f"Erro inesperado na chamada OpenRouter: {e}", exc_info=True)
                 return {}
 
     return {}

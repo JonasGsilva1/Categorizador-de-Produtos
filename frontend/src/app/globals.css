@@ -129,7 +129,7 @@ body::before {
 .app-container {
   position: relative;
   z-index: 1;
-  max-width: 960px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-6);
   min-height: 100vh;
