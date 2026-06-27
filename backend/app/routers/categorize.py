@@ -249,9 +249,21 @@ async def categorize_ai_on_demand(
     if not lote_para_ia:
          return {"suggested": []}
 
-    # Chama o OpenRouter
-    logger.info(f"[Tarefa {job_id[:8]}] Solicitada categorização via IA para {len(lote_para_ia)} itens.")
-    mapeamento_ia = await classify_batch_openrouter(lote_para_ia)
+    # Chama o OpenRouter em lotes menores para evitar estourar o limite de tokens da IA
+    TAMANHO_LOTE_IA = 40
+    logger.info(f"[Tarefa {job_id[:8]}] Solicitada categorização via IA para {len(lote_para_ia)} itens (Lotes de {TAMANHO_LOTE_IA}).")
+    
+    mapeamento_ia = {}
+    for i in range(0, len(lote_para_ia), TAMANHO_LOTE_IA):
+        lote_atual = lote_para_ia[i : i + TAMANHO_LOTE_IA]
+        logger.info(f"Enviando sub-lote {i // TAMANHO_LOTE_IA + 1} de {(len(lote_para_ia) - 1) // TAMANHO_LOTE_IA + 1} ({len(lote_atual)} itens)...")
+        
+        resultado_parcial = await classify_batch_openrouter(lote_atual)
+        mapeamento_ia.update(resultado_parcial)
+        
+        # Pequena pausa entre lotes se houver mais para evitar rate limits excessivos
+        if i + TAMANHO_LOTE_IA < len(lote_para_ia):
+            await asyncio.sleep(2)
 
     # Prepara a resposta
     sugestoes = []
@@ -263,6 +275,7 @@ async def categorize_ai_on_demand(
             "confianca": cat.grau_de_confianca
         })
 
+    logger.info(f"IA finalizada. {len(sugestoes)} sugestões retornadas para o frontend.")
     return {"suggested": sugestoes}
 
 
