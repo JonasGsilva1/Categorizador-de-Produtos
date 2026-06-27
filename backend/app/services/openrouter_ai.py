@@ -72,10 +72,10 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
     if "llama" in model.lower() or "openai" in model.lower():
          payload["response_format"] = {"type": "json_object"}
 
-    max_tentativas = 3
+    max_tentativas = 5
     atraso_base = 5
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         for tentativa in range(1, max_tentativas + 1):
             try:
                 logger.info(f"Enviando lote de {len(lote_produtos)} itens para OpenRouter (Tentativa {tentativa}). Payload preview: {json.dumps(payload)[:200]}...")
@@ -90,6 +90,21 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
                 
                 if response.status_code == 429:
                     atraso = atraso_base * tentativa
+                    # Tenta ler o header Retry-After
+                    retry_after_header = response.headers.get("Retry-After")
+                    if retry_after_header and retry_after_header.isdigit():
+                        atraso = int(retry_after_header) + 2 # Add 2s buffer
+                    else:
+                        # Tenta procurar retry_after_seconds no JSON
+                        try:
+                            err_json = response.json()
+                            if isinstance(err_json, dict) and "error" in err_json:
+                                meta = err_json["error"].get("metadata", {})
+                                if "retry_after_seconds" in meta:
+                                    atraso = int(meta["retry_after_seconds"]) + 2
+                        except:
+                            pass
+                            
                     logger.warning(f"Rate limit OpenRouter. Tentativa {tentativa}/{max_tentativas}. Aguardando {atraso}s...")
                     await asyncio.sleep(atraso)
                     continue
