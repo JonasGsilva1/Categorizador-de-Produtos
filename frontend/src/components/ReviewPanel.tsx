@@ -144,8 +144,25 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
   const [grupoPersonalizadoMassa, setGrupoPersonalizadoMassa]       = useState('');
   const [subgrupoPersonalizadoMassa, setSubgrupoPersonalizadoMassa] = useState('');
 
-  // ── Grupos personalizados criados pelo usuário nesta sessão ─────────────
-  const [gruposPersonalizados, setGruposPersonalizados] = useState<Record<string, string[]>>({});
+  // ── Grupos personalizados persistidos no localStorage ──────────────────
+  const [gruposPersonalizados, setGruposPersonalizados] = useState<Record<string, string[]>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const salvo = localStorage.getItem('categorizador-grupos-personalizados');
+      return salvo ? JSON.parse(salvo) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Persistir grupos personalizados no localStorage sempre que mudarem
+  useEffect(() => {
+    if (Object.keys(gruposPersonalizados).length > 0) {
+      try {
+        localStorage.setItem('categorizador-grupos-personalizados', JSON.stringify(gruposPersonalizados));
+      } catch { /* ignore quota errors */ }
+    }
+  }, [gruposPersonalizados]);
 
   // Taxonomia completa = pré-definida + personalizados criados na sessão
   const taxonomiaCompleta = useMemo<Record<string, string[]>>(() => ({
