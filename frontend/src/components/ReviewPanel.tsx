@@ -164,11 +164,20 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     }
   }, [gruposPersonalizados]);
 
-  // Taxonomia completa = pré-definida + personalizados criados na sessão
-  const taxonomiaCompleta = useMemo<Record<string, string[]>>(() => ({
-    ...TAXONOMIA,
-    ...gruposPersonalizados,
-  }), [gruposPersonalizados]);
+  // Taxonomia completa = pré-definida + personalizados (merge de subgrupos)
+  const taxonomiaCompleta = useMemo<Record<string, string[]>>(() => {
+    const merged: Record<string, string[]> = { ...TAXONOMIA };
+    Object.entries(gruposPersonalizados).forEach(([grupo, subgrupos]) => {
+      const existentes = merged[grupo] ?? [];
+      // Combina subgrupos pré-definidos + personalizados, sem duplicatas
+      const combinados = [...existentes];
+      subgrupos.forEach(s => {
+        if (!combinados.includes(s)) combinados.push(s);
+      });
+      merged[grupo] = combinados;
+    });
+    return merged;
+  }, [gruposPersonalizados]);
 
   const todosOsGrupos = useMemo(() => Object.keys(taxonomiaCompleta), [taxonomiaCompleta]);
 
