@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     
     # --- Provedores de IA (OpenRouter) ---
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemma-2-9b-it:free"
+    openrouter_model: str = "mistralai/mistral-7b-instruct:free"
 
     # --- Autenticação ---
     supabase_jwt_secret: str = ""
