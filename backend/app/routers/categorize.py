@@ -190,6 +190,83 @@ async def get_job_results(job_id: str, user_data: dict = Depends(verify_supabase
 
 
 # ---------------------------------------------------------------------------
+# POST /api/jobs/{job_id}/categorize_ai — Categorização on-demand (OpenRouter)
+# ---------------------------------------------------------------------------
+
+@router.post("/jobs/{job_id}/categorize_ai")
+async def categorize_ai_on_demand(
+    job_id: str,
+    payload: PayloadRevisao,
+    user_data: dict = Depends(verify_supabase_token),
+):
+    """
+    Recebe itens pendentes e tenta categorizá-los via IA (OpenRouter).
+    Retorna as sugestões, mas NÃO salva automaticamente no backend.
+    """
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de job_id inválido.")
+
+    if not payload.items:
+        return {"suggested": []}
+
+    # Importa o serviço do OpenRouter (import inline para evitar ciclo, se houver)
+    from app.services.openrouter_ai import classify_batch_openrouter
+
+    # Monta o lote para envio
+    # Como PayloadRevisao usa ItemRevisao, precisamos mapeá-lo.
+    # O Pydantic nos garante row_index, grupo, subgrupo, mas na IA precisamos da descrição e NCM originais.
+    
+    # Precisamos ler o JSON original para obter as descrições
+    id_usuario = user_data["user_id"]
+    pool_db = require_pool()
+
+    async with pool_db.acquire() as conexao:
+        linha = await conexao.fetchrow(
+            "SELECT status, results_json_path FROM processing_jobs WHERE id = $1 AND user_id = $2",
+            job_id, id_usuario,
+        )
+
+    if not linha or not linha["results_json_path"] or not os.path.exists(linha["results_json_path"]):
+        raise HTTPException(status_code=404, detail="Arquivo de resultados não encontrado.")
+
+    with open(linha["results_json_path"], encoding="utf-8") as arquivo:
+        resultados_raw: list[dict] = json.load(arquivo)
+        
+    indice_resultados = {r["row_index"]: r for r in resultados_raw}
+    
+    lote_para_ia = []
+    for item in payload.items:
+        original = indice_resultados.get(item.row_index)
+        if original:
+            lote_para_ia.append({
+                "id_linha": item.row_index,
+                "descricao": original["descricao"],
+                "ncm": original.get("ncm", "")
+            })
+            
+    if not lote_para_ia:
+         return {"suggested": []}
+
+    # Chama o OpenRouter
+    logger.info(f"[Tarefa {job_id[:8]}] Solicitada categorização via IA para {len(lote_para_ia)} itens.")
+    mapeamento_ia = await classify_batch_openrouter(lote_para_ia)
+
+    # Prepara a resposta
+    sugestoes = []
+    for id_linha, cat in mapeamento_ia.items():
+        sugestoes.append({
+            "row_index": id_linha,
+            "grupo": cat.grupo,
+            "subgrupo": cat.subgrupo,
+            "confianca": cat.grau_de_confianca
+        })
+
+    return {"suggested": sugestoes}
+
+
+# ---------------------------------------------------------------------------
 # PATCH /api/jobs/{job_id}/results — aplica correções do usuário
 # ---------------------------------------------------------------------------
 

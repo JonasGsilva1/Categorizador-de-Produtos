@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     database_url: str
 
     # --- Provedores de IA (Gemini) ---
-    gemini_api_key: str
+    gemini_api_key: str = ""
+    
+    # --- Provedores de IA (OpenRouter) ---
+    openrouter_api_key: str = ""
+    openrouter_model: str = "meta-llama/llama-3-8b-instruct:free"
 
     # --- Autenticação ---
     supabase_jwt_secret: str = ""

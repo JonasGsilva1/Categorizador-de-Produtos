@@ -122,6 +122,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
   const [carregando, setCarregando]     = useState(true);
   const [salvando, setSalvando]         = useState(false);
   const [finalizando, setFinalizando]   = useState(false);
+  const [isAiLoading, setIsAiLoading]   = useState(false);
   const [erro, setErro]                 = useState<string | null>(null);
 
   // ── Filtro e busca da tabela ─────────────────────────────────────────────
@@ -527,6 +528,69 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     }
   };
 
+  const categorizarComIA = async () => {
+    const pendentes = resultados.filter(
+      r => r.status === 'Pendente de Revisão' && !edicoes[r.row_index]
+    );
+
+    if (pendentes.length === 0) {
+      alert('Não há itens pendentes para classificar (ou todos já estão editados).');
+      return;
+    }
+
+    setIsAiLoading(true);
+    try {
+      const payload = {
+        items: pendentes.map(p => ({
+          row_index: p.row_index,
+          grupo: '',
+          subgrupo: ''
+        }))
+      };
+
+      const res = await fetch(`${API_BASE}/jobs/${jobId}/categorize_ai`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        throw new Error('Falha ao processar IA. Verifique se a API Key do OpenRouter está configurada.');
+      }
+
+      const data = await res.json();
+      const sugestoes: any[] = data.suggested || [];
+
+      if (sugestoes.length === 0) {
+        alert('A IA não retornou sugestões. Tente novamente mais tarde.');
+        return;
+      }
+
+      setEdicoes(anteriores => {
+        const novas = { ...anteriores };
+        let count = 0;
+        sugestoes.forEach(sug => {
+          if (sug.grupo && sug.subgrupo) {
+            novas[sug.row_index] = {
+              grupo: sug.grupo,
+              subgrupo: sug.subgrupo
+            };
+            count++;
+          }
+        });
+        alert(`${count} itens classificados pela IA!\nPor favor, revise a lista e clique em "Salvar Progresso".`);
+        return novas;
+      });
+    } catch (err: any) {
+      alert(err.message || 'Erro ao chamar a IA.');
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
   const aplicarEdicaoEmMassa = () => {
     let grupoFinal = grupoPainelMassa;
     let subgrupoFinal = subgrupoPainelMassa;
@@ -642,6 +706,17 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
             <option value="pendentes">Mostrar Pendentes</option>
             <option value="todos">Mostrar Todos</option>
           </select>
+          {totalPendentes > 0 && (
+            <button 
+              onClick={categorizarComIA} 
+              disabled={isAiLoading}
+              className="review-btn-back" 
+              title="Mandar itens pendentes para a Inteligência Artificial (OpenRouter)"
+              style={{ background: 'rgba(167, 139, 250, 0.1)', color: '#a78bfa', borderColor: 'rgba(167, 139, 250, 0.3)' }}
+            >
+              {isAiLoading ? '🪄 Pensando...' : '🪄 Classificar com IA'}
+            </button>
+          )}
           <button onClick={() => setMostrarEditor(true)} className="review-btn-back" title="Editar nomes de grupos e subgrupos">
             ⚙️ Taxonomia
           </button>
