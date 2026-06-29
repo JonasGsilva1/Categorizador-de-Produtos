@@ -146,6 +146,8 @@ class ItemRevisao(BaseModel):
     row_index: int
     grupo: str
     subgrupo: str
+    origem: Optional[str] = "Revisão Manual"
+    status: Optional[str] = "Aprovado"
 
 
 class PayloadRevisao(BaseModel):
@@ -419,8 +421,8 @@ async def patch_job_results(
         if correcao.row_index in indice:
             indice[correcao.row_index]["grupo"] = correcao.grupo
             indice[correcao.row_index]["subgrupo"] = correcao.subgrupo
-            indice[correcao.row_index]["origem"] = "Revisão Manual"
-            indice[correcao.row_index]["status"] = "Aprovado"
+            indice[correcao.row_index]["origem"] = correcao.origem
+            indice[correcao.row_index]["status"] = correcao.status
             aplicadas += 1
 
     # Salvar JSON atualizado

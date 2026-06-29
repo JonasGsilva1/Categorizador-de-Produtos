@@ -127,7 +127,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
   const [erro, setErro]                 = useState<string | null>(null);
 
   // ── Filtro e busca da tabela ─────────────────────────────────────────────
-  const [filtro, setFiltro]   = useState<'pendentes' | 'todos'>('pendentes');
+  const [filtro, setFiltro]   = useState<'pendentes' | 'todos' | 'ia'>('pendentes');
   const [busca, setBusca]     = useState('');
 
   // ── Paginação ───────────────────────────────────────────────────────────
@@ -321,16 +321,19 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
 
   // Itens filtrados (sem paginação)
   const itensFiltrados = useMemo(() => {
-    let lista = filtro === 'pendentes'
-      ? resultados.filter(r => r.status === 'Pendente de Revisão')
-      : resultados;
+    let lista = resultados;
+    if (filtro === 'pendentes') {
+      lista = resultados.filter(r => r.status === 'Pendente de Revisão');
+    } else if (filtro === 'ia') {
+      lista = resultados.filter(r => r.origem === 'IA' || edicoes[r.row_index]?.viaIA);
+    }
 
     if (busca.trim()) {
       const termoBusca = busca.toLowerCase();
       lista = lista.filter(r => r.descricao.toLowerCase().includes(termoBusca));
     }
     return lista;
-  }, [resultados, filtro, busca]);
+  }, [resultados, filtro, busca, edicoes]);
 
   // ── Paginação calculada ──────────────────────────────────────────────────
   const totalPaginas = Math.max(1, Math.ceil(itensFiltrados.length / itensPorPagina));
@@ -643,6 +646,8 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                         row_index: sug.row_index,
                         grupo: sug.grupo,
                         subgrupo: sug.subgrupo,
+                        origem: 'IA',
+                        status: 'Pendente de Revisão'
                       }));
                     if (autoSavePayload.length > 0) {
                       fetch(`${API_BASE}/jobs/${jobId}/results`, {
@@ -680,6 +685,27 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                       });
                       return novas;
                     });
+
+                    // Auto-salvar no backend silenciosamente (fallback)
+                    const autoSavePayload = data.suggested
+                      .filter((sug: any) => sug.grupo && sug.subgrupo)
+                      .map((sug: any) => ({
+                        row_index: sug.row_index,
+                        grupo: sug.grupo,
+                        subgrupo: sug.subgrupo,
+                        origem: 'IA',
+                        status: 'Pendente de Revisão'
+                      }));
+                    if (autoSavePayload.length > 0) {
+                      fetch(`${API_BASE}/jobs/${jobId}/results`, {
+                        method: 'PATCH',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${session.access_token}`,
+                        },
+                        body: JSON.stringify({ items: autoSavePayload }),
+                      }).catch(e => console.error('Erro no auto-save da IA fallback', e));
+                    }
                   }
                 }
               } catch (err) {
@@ -834,6 +860,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
           >
             <option value="pendentes">Mostrar Pendentes</option>
             <option value="todos">Mostrar Todos</option>
+            <option value="ia">Mostrar Somente IA</option>
           </select>
           {totalPendentes > 0 && (
             <button 
