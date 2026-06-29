@@ -62,6 +62,25 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
       if (value) responseHeaders.set(key, value);
     }
 
+    // Detectar SSE (Server-Sent Events) e fazer streaming sem buffering
+    const contentType = backendResponse.headers.get('content-type') || '';
+    if (contentType.includes('text/event-stream')) {
+      responseHeaders.set('Cache-Control', 'no-cache');
+      responseHeaders.set('Connection', 'keep-alive');
+      responseHeaders.set('X-Accel-Buffering', 'no');
+
+      // Stream a resposta chunk-by-chunk
+      const stream = backendResponse.body;
+      if (!stream) {
+        return new NextResponse('', { status: 204 });
+      }
+
+      return new NextResponse(stream as any, {
+        status: backendResponse.status,
+        headers: responseHeaders,
+      });
+    }
+
     const responseBody = await backendResponse.arrayBuffer();
 
     return new NextResponse(responseBody, {

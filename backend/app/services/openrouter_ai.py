@@ -110,6 +110,59 @@ def _extrair_retry_after(response: httpx.Response) -> int:
     return 30
 
 
+def _recuperar_json_truncado(content: str) -> list[dict]:
+    """
+    Tenta recuperar itens válidos de um JSON truncado.
+
+    Modelos free frequentemente cortam a resposta no meio do JSON quando
+    atingem o limite de tokens. Esta função extrai todos os objetos de
+    produto completos que aparecem antes do ponto de corte.
+
+    Retorna lista de dicts (pode ser vazia se nada for recuperável).
+    """
+    import re
+
+    # Estratégia 1: tentar fechar o JSON truncado manualmente
+    # Se o JSON termina no meio de um objeto dentro do array "produtos",
+    # removemos o último objeto incompleto e fechamos os colchetes/chaves.
+    for suffix in ["}]}", "]}",  "}]}}"]:
+        # Encontrar o último objeto completo (termina com })
+        # e tentar fechar o array/objeto raiz
+        last_complete = content.rfind("},")
+        if last_complete > 0:
+            tentativa = content[:last_complete + 1] + suffix
+            try:
+                parsed = json.loads(tentativa)
+                produtos = parsed.get("produtos", [])
+                if isinstance(produtos, list) and len(produtos) > 0:
+                    return produtos
+                if isinstance(parsed, list) and len(parsed) > 0:
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+
+    # Estratégia 2: extrair objetos individuais via regex
+    # Captura cada bloco { ... } que contém id_linha
+    pattern = re.compile(
+        r'\{\s*"id_linha"\s*:\s*\d+\s*,\s*'
+        r'"grupo"\s*:\s*"[^"]*"\s*,\s*'
+        r'"subgrupo"\s*:\s*"[^"]*"\s*,\s*'
+        r'"grau_de_confianca"\s*:\s*\d+\s*\}',
+        re.DOTALL,
+    )
+    matches = pattern.findall(content)
+    if matches:
+        recovered = []
+        for m in matches:
+            try:
+                recovered.append(json.loads(m))
+            except json.JSONDecodeError:
+                continue
+        return recovered
+
+    return []
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Função principal: classifica um lote com rotação de modelos
 # ──────────────────────────────────────────────────────────────────────────────
@@ -268,7 +321,14 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
                     return {}
 
                 # ── Sucesso — parsear resposta ────────────────────────────
-                data = response.json()
+                try:
+                    data = response.json()
+                except json.JSONDecodeError as err:
+                    logger.error(f"Erro inesperado ({modelo_escolhido}): Resposta não é JSON válido - {err}")
+                    if tentativa < MAX_TENTATIVAS:
+                        await asyncio.sleep(2)
+                        continue
+                    return {}
 
                 if "choices" not in data or not data["choices"]:
                     logger.error(
@@ -312,16 +372,26 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
                             )
                             produtos_raw = []
                 except json.JSONDecodeError as erro_json:
-                    logger.error(
-                        f"JSON inválido do modelo '{modelo_escolhido}': {erro_json}. "
-                        f"Conteúdo: {content[:300]}"
-                    )
-                    if tentativa < MAX_TENTATIVAS:
-                        # Tentar outro modelo (talvez um com JSON mode melhor)
-                        _throttle.marcar_rate_limit(modelo_escolhido, 60)
-                        await asyncio.sleep(2)
-                        continue
-                    return {}
+                    # ── Recuperação de JSON truncado ──────────────────────
+                    # Modelos free frequentemente cortam a resposta no meio
+                    # do JSON por limite de tokens. Tentamos salvar os itens
+                    # completos que já foram retornados antes do corte.
+                    produtos_raw = _recuperar_json_truncado(content)
+                    if produtos_raw:
+                        logger.warning(
+                            f"JSON truncado de '{modelo_escolhido}'. "
+                            f"Recuperados {len(produtos_raw)} itens do fragmento."
+                        )
+                    else:
+                        logger.error(
+                            f"JSON inválido de '{modelo_escolhido}' e sem itens "
+                            f"recuperáveis: {erro_json}. Conteúdo: {content[:300]}"
+                        )
+                        if tentativa < MAX_TENTATIVAS:
+                            _throttle.marcar_rate_limit(modelo_escolhido, 60)
+                            await asyncio.sleep(2)
+                            continue
+                        return {}
 
                 # ── Montar mapeamento validado ────────────────────────────
                 mapeamento: dict[int, ProdutoCategorizado] = {}

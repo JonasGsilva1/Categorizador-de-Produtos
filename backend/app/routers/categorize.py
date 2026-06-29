@@ -11,7 +11,7 @@ import json
 import asyncio
 import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from app.auth import verify_supabase_token
@@ -200,8 +200,13 @@ async def categorize_ai_on_demand(
     user_data: dict = Depends(verify_supabase_token),
 ):
     """
-    Recebe itens pendentes e tenta categorizá-los via IA (OpenRouter).
-    Retorna as sugestões, mas NÃO salva automaticamente no backend.
+    Categoriza itens pendentes via IA (OpenRouter) com streaming SSE.
+    Retorna Server-Sent Events com progresso em tempo real.
+    
+    Eventos SSE enviados:
+    - {"type": "progress", "sublote": N, "total_sublotes": M, "classificados": X, "total_acumulado": Y, "total_itens": Z}
+    - {"type": "result", "suggested": [...]}  (evento final com todos os resultados)
+    - {"type": "error", "message": "..."}  (em caso de falha)
     """
     try:
         uuid.UUID(job_id)
@@ -209,16 +214,13 @@ async def categorize_ai_on_demand(
         raise HTTPException(status_code=400, detail="Formato de job_id inválido.")
 
     if not payload.items:
-        return {"suggested": []}
+        return StreamingResponse(
+            _sse_single_event("result", {"suggested": []}),
+            media_type="text/event-stream",
+        )
 
-    # Importa o serviço do OpenRouter (import inline para evitar ciclo, se houver)
     from app.services.openrouter_ai import classify_batch_openrouter
 
-    # Monta o lote para envio
-    # Como PayloadRevisao usa ItemRevisao, precisamos mapeá-lo.
-    # O Pydantic nos garante row_index, grupo, subgrupo, mas na IA precisamos da descrição e NCM originais.
-    
-    # Precisamos ler o JSON original para obter as descrições
     id_usuario = user_data["user_id"]
     pool_db = require_pool()
 
@@ -247,59 +249,103 @@ async def categorize_ai_on_demand(
             })
             
     if not lote_para_ia:
-         return {"suggested": []}
+        return StreamingResponse(
+            _sse_single_event("result", {"suggested": []}),
+            media_type="text/event-stream",
+        )
 
-    # Chama o OpenRouter em lotes menores para evitar estourar o limite de tokens da IA
-    # Lotes de 20 itens reduzem a chance de 429 em modelos gratuitos
-    TAMANHO_LOTE_IA = 20
-    total_sublotes = (len(lote_para_ia) - 1) // TAMANHO_LOTE_IA + 1
-    logger.info(
-        f"[Tarefa {job_id[:8]}] Solicitada categorização via IA para "
-        f"{len(lote_para_ia)} itens ({total_sublotes} sub-lotes de até {TAMANHO_LOTE_IA})."
-    )
-    
-    mapeamento_ia = {}
-    pausa_entre_lotes = 12  # segundos — pausa base entre sub-lotes (modelos free)
-    
-    for i in range(0, len(lote_para_ia), TAMANHO_LOTE_IA):
-        lote_atual = lote_para_ia[i : i + TAMANHO_LOTE_IA]
-        num_sublote = i // TAMANHO_LOTE_IA + 1
-        logger.info(f"Enviando sub-lote {num_sublote} de {total_sublotes} ({len(lote_atual)} itens)...")
+    async def gerar_eventos_sse():
+        """Generator async que produz eventos SSE conforme cada sub-lote é processado."""
+        TAMANHO_LOTE_IA = 20
+        total_sublotes = (len(lote_para_ia) - 1) // TAMANHO_LOTE_IA + 1
         
-        resultado_parcial = await classify_batch_openrouter(lote_atual)
-        mapeamento_ia.update(resultado_parcial)
-        
-        # Log de progresso parcial
-        if resultado_parcial:
-            logger.info(
-                f"Sub-lote {num_sublote}: {len(resultado_parcial)}/{len(lote_atual)} classificados. "
-                f"Total acumulado: {len(mapeamento_ia)}."
-            )
-        else:
-            logger.warning(
-                f"Sub-lote {num_sublote}: nenhum resultado retornado. "
-                f"Aumentando pausa para reduzir pressão de rate-limit."
-            )
-            # Aumentar a pausa se o lote falhou completamente
-            pausa_entre_lotes = min(pausa_entre_lotes + 10, 60)
-        
-        # Pausa adaptativa entre lotes (modelos free têm rate-limits agressivos)
-        if i + TAMANHO_LOTE_IA < len(lote_para_ia):
-            logger.info(f"Aguardando {pausa_entre_lotes}s antes do próximo sub-lote...")
-            await asyncio.sleep(pausa_entre_lotes)
+        logger.info(
+            f"[Tarefa {job_id[:8]}] SSE: categorização IA para "
+            f"{len(lote_para_ia)} itens ({total_sublotes} sub-lotes)."
+        )
 
-    # Prepara a resposta
-    sugestoes = []
-    for id_linha, cat in mapeamento_ia.items():
-        sugestoes.append({
-            "row_index": id_linha,
-            "grupo": cat.grupo,
-            "subgrupo": cat.subgrupo,
-            "confianca": cat.grau_de_confianca
+        # Evento inicial: informar o frontend sobre o tamanho do trabalho
+        yield _formatar_sse("start", {
+            "total_itens": len(lote_para_ia),
+            "total_sublotes": total_sublotes,
+            "tamanho_lote": TAMANHO_LOTE_IA,
         })
+        
+        mapeamento_ia = {}
+        pausa_entre_lotes = 12
+        
+        for i in range(0, len(lote_para_ia), TAMANHO_LOTE_IA):
+            lote_atual = lote_para_ia[i : i + TAMANHO_LOTE_IA]
+            num_sublote = i // TAMANHO_LOTE_IA + 1
+            
+            logger.info(f"Enviando sub-lote {num_sublote} de {total_sublotes} ({len(lote_atual)} itens)...")
+            
+            resultado_parcial = await classify_batch_openrouter(lote_atual)
+            mapeamento_ia.update(resultado_parcial)
+            
+            classificados_neste_lote = len(resultado_parcial)
+            
+            if resultado_parcial:
+                logger.info(
+                    f"Sub-lote {num_sublote}: {classificados_neste_lote}/{len(lote_atual)} classificados. "
+                    f"Total acumulado: {len(mapeamento_ia)}."
+                )
+            else:
+                logger.warning(
+                    f"Sub-lote {num_sublote}: nenhum resultado retornado. "
+                    f"Aumentando pausa para reduzir pressão de rate-limit."
+                )
+                pausa_entre_lotes = min(pausa_entre_lotes + 10, 60)
+            
+            # Enviar evento de progresso ao frontend
+            yield _formatar_sse("progress", {
+                "sublote": num_sublote,
+                "total_sublotes": total_sublotes,
+                "classificados_neste_lote": classificados_neste_lote,
+                "total_acumulado": len(mapeamento_ia),
+                "total_itens": len(lote_para_ia),
+            })
+            
+            # Pausa adaptativa entre lotes
+            if i + TAMANHO_LOTE_IA < len(lote_para_ia):
+                logger.info(f"Aguardando {pausa_entre_lotes}s antes do próximo sub-lote...")
+                await asyncio.sleep(pausa_entre_lotes)
 
-    logger.info(f"IA finalizada. {len(sugestoes)} sugestões retornadas para o frontend.")
-    return {"suggested": sugestoes}
+        # Preparar resultado final
+        sugestoes = []
+        for id_linha, cat in mapeamento_ia.items():
+            sugestoes.append({
+                "row_index": id_linha,
+                "grupo": cat.grupo,
+                "subgrupo": cat.subgrupo,
+                "confianca": cat.grau_de_confianca
+            })
+
+        logger.info(f"IA finalizada. {len(sugestoes)} sugestões via SSE.")
+        
+        # Evento final com todos os resultados
+        yield _formatar_sse("result", {"suggested": sugestoes})
+
+    return StreamingResponse(
+        gerar_eventos_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Desabilita buffering no nginx/proxy
+        },
+    )
+
+
+def _formatar_sse(tipo_evento: str, dados: dict) -> str:
+    """Formata um evento SSE com tipo e dados JSON."""
+    payload = json.dumps(dados, ensure_ascii=False)
+    return f"event: {tipo_evento}\ndata: {payload}\n\n"
+
+
+async def _sse_single_event(tipo: str, dados: dict):
+    """Generator para um único evento SSE (caso trivial)."""
+    yield _formatar_sse(tipo, dados)
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ interface PropsPainelRevisao {
 interface EdicaoItem {
   grupo: string;
   subgrupo: string;
+  viaIA?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -528,6 +529,14 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     }
   };
 
+  // ── Estado de progresso da IA ─────────────────────────────────────────────
+  const [aiProgress, setAiProgress] = useState<{
+    sublote: number;
+    totalSublotes: number;
+    totalAcumulado: number;
+    totalItens: number;
+  } | null>(null);
+
   const categorizarComIA = async () => {
     const pendentes = resultados.filter(
       r => r.status === 'Pendente de Revisão' && !edicoes[r.row_index]
@@ -539,6 +548,8 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     }
 
     setIsAiLoading(true);
+    setAiProgress(null);
+
     try {
       const payload = {
         items: pendentes.map(p => ({
@@ -561,10 +572,68 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
         throw new Error('Falha ao processar IA. Verifique se a API Key do OpenRouter está configurada.');
       }
 
-      const data = await res.json();
-      const sugestoes: any[] = data.suggested || [];
+      // Consumir eventos SSE do stream
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('Stream não disponível.');
 
-      if (sugestoes.length === 0) {
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let sugestoesFinais: any[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Processar eventos SSE completos no buffer
+        const linhas = buffer.split('\n');
+        buffer = '';
+        
+        let tipoEvento = '';
+
+        for (const linha of linhas) {
+          if (linha.startsWith('event: ')) {
+            tipoEvento = linha.slice(7).trim();
+          } else if (linha.startsWith('data: ')) {
+            const dataStr = linha.slice(6).trim();
+            try {
+              const data = JSON.parse(dataStr);
+              
+              if (tipoEvento === 'start') {
+                setAiProgress({
+                  sublote: 0,
+                  totalSublotes: data.total_sublotes,
+                  totalAcumulado: 0,
+                  totalItens: data.total_itens,
+                });
+              } else if (tipoEvento === 'progress') {
+                setAiProgress({
+                  sublote: data.sublote,
+                  totalSublotes: data.total_sublotes,
+                  totalAcumulado: data.total_acumulado,
+                  totalItens: data.total_itens,
+                });
+              } else if (tipoEvento === 'result') {
+                sugestoesFinais = data.suggested || [];
+              }
+            } catch {
+              // JSON incompleto — guardar no buffer para próxima iteração
+              buffer = linha + '\n';
+            }
+            tipoEvento = '';
+          } else if (linha.trim() === '') {
+            // Linha vazia = fim de evento SSE
+            tipoEvento = '';
+          } else {
+            // Linha parcial — guardar para próximo chunk
+            buffer += linha + '\n';
+          }
+        }
+      }
+
+      // Aplicar sugestões finais
+      if (sugestoesFinais.length === 0) {
         alert('A IA não retornou sugestões. Tente novamente mais tarde.');
         return;
       }
@@ -572,11 +641,12 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
       setEdicoes(anteriores => {
         const novas = { ...anteriores };
         let count = 0;
-        sugestoes.forEach(sug => {
+        sugestoesFinais.forEach(sug => {
           if (sug.grupo && sug.subgrupo) {
             novas[sug.row_index] = {
               grupo: sug.grupo,
-              subgrupo: sug.subgrupo
+              subgrupo: sug.subgrupo,
+              viaIA: true
             };
             count++;
           }
@@ -588,6 +658,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
       alert(err.message || 'Erro ao chamar a IA.');
     } finally {
       setIsAiLoading(false);
+      setAiProgress(null);
     }
   };
 
@@ -725,6 +796,28 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
           </button>
         </div>
       </div>
+
+      {aiProgress && (
+        <div style={{ margin: '0 24px 16px', background: 'var(--surface)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '14px', color: 'var(--text-secondary)' }}>
+            <strong>🪄 IA Trabalhando...</strong>
+            <span>Lote {aiProgress.sublote} / {aiProgress.totalSublotes}</span>
+          </div>
+          <div style={{ width: '100%', height: '8px', background: 'var(--background)', borderRadius: '4px', overflow: 'hidden' }}>
+            <div 
+              style={{ 
+                width: `${(aiProgress.sublote / aiProgress.totalSublotes) * 100}%`, 
+                height: '100%', 
+                background: 'linear-gradient(90deg, #a78bfa, #8b5cf6)',
+                transition: 'width 0.3s ease'
+              }} 
+            />
+          </div>
+          <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-tertiary)', textAlign: 'right' }}>
+            {aiProgress.totalAcumulado} de {aiProgress.totalItens} classificados
+          </div>
+        </div>
+      )}
 
       {erro && (
         <div className="review-error">
@@ -934,9 +1027,11 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                       NCM: {item.ncm || '-'}
                     </td>
                     <td className="review-td-select">
-                      <select 
-                        value={todosOsGrupos.includes(grupoAtual) ? grupoAtual : ''}
-                        onChange={(e) => {
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {edicoes[item.row_index]?.viaIA && <span title="Classificado pela IA" style={{ fontSize: '16px' }}>🤖</span>}
+                        <select 
+                          value={todosOsGrupos.includes(grupoAtual) ? grupoAtual : ''}
+                          onChange={(e) => {
                           const v = e.target.value;
                           if (v === OPCAO_PERSONALIZADO) {
                             const novoG = prompt('Digite o nome do novo Grupo:');
@@ -955,7 +1050,8 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                         {todosOsGrupos.map(g => <option key={g} value={g}>{g}</option>)}
                         {!todosOsGrupos.includes(grupoAtual) && grupoAtual && <option value={grupoAtual}>{grupoAtual}</option>}
                         <option value={OPCAO_PERSONALIZADO}>+ Personalizado</option>
-                      </select>
+                        </select>
+                      </div>
                     </td>
                     <td className="review-td-select">
                       <select 
@@ -1057,7 +1153,9 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
 
                   <div className="review-card-selects">
                     <div className="review-card-field">
-                      <label>Grupo</label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        Grupo {edicoes[item.row_index]?.viaIA && <span title="Classificado pela IA">🤖</span>}
+                      </label>
                       <select 
                         value={todosOsGrupos.includes(grupoAtual) ? grupoAtual : ''}
                         onChange={(e) => {
