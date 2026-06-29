@@ -579,6 +579,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
       const decoder = new TextDecoder();
       let buffer = '';
       let sugestoesFinais: any[] = [];
+      let totalSugestoesRecebidas = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -625,6 +626,24 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                   totalAcumulado: data.total_acumulado,
                   totalItens: data.total_itens,
                 });
+                
+                // Aplicar sugestões parciais imediatamente na tela
+                if (data.new_items && data.new_items.length > 0) {
+                  totalSugestoesRecebidas += data.new_items.length;
+                  setEdicoes(anteriores => {
+                    const novas = { ...anteriores };
+                    data.new_items.forEach((sug: any) => {
+                      if (sug.grupo && sug.subgrupo) {
+                        novas[sug.row_index] = {
+                          grupo: sug.grupo,
+                          subgrupo: sug.subgrupo,
+                          viaIA: true
+                        };
+                      }
+                    });
+                    return novas;
+                  });
+                }
               } else if (tipoEvento === 'result') {
                 sugestoesFinais = data.suggested || [];
               }
@@ -635,28 +654,30 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
         }
       }
 
-      // Aplicar sugestões finais
-      if (sugestoesFinais.length === 0) {
-        alert('A IA não retornou sugestões. Tente novamente mais tarde.');
-        return;
+      // Aplicar sugestões finais caso tenham vindo apenas no evento 'result' (fallback)
+      if (sugestoesFinais.length > 0 && totalSugestoesRecebidas === 0) {
+        totalSugestoesRecebidas = sugestoesFinais.length;
+        setEdicoes(anteriores => {
+          const novas = { ...anteriores };
+          sugestoesFinais.forEach(sug => {
+            if (sug.grupo && sug.subgrupo) {
+              novas[sug.row_index] = {
+                grupo: sug.grupo,
+                subgrupo: sug.subgrupo,
+                viaIA: true
+              };
+            }
+          });
+          return novas;
+        });
       }
 
-      setEdicoes(anteriores => {
-        const novas = { ...anteriores };
-        let count = 0;
-        sugestoesFinais.forEach(sug => {
-          if (sug.grupo && sug.subgrupo) {
-            novas[sug.row_index] = {
-              grupo: sug.grupo,
-              subgrupo: sug.subgrupo,
-              viaIA: true
-            };
-            count++;
-          }
-        });
-        alert(`${count} itens classificados pela IA!\nPor favor, revise a lista e clique em "Salvar Progresso".`);
-        return novas;
-      });
+      if (totalSugestoesRecebidas === 0) {
+        alert('A IA não retornou sugestões ou a conexão caiu. Tente novamente mais tarde.');
+      } else {
+        alert(`${totalSugestoesRecebidas} itens classificados pela IA!\n\nSe ainda houver pendentes (devido ao tempo limite da conexão), você pode clicar no botão da IA novamente para continuar de onde parou.`);
+      }
+
     } catch (err: any) {
       alert(err.message || 'Erro ao chamar a IA.');
     } finally {

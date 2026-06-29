@@ -312,6 +312,15 @@ async def categorize_ai_on_demand(
             # Recalcular total_sublotes estimado para a UI
             sublotes_restantes = (len(lote_para_processar) - 1) // TAMANHO_LOTE_IA + 1 if lote_para_processar else 0
             
+            sugestoes_parciais = []
+            for id_linha, cat in resultado_parcial.items():
+                sugestoes_parciais.append({
+                    "row_index": id_linha,
+                    "grupo": cat.grupo,
+                    "subgrupo": cat.subgrupo,
+                    "confianca": cat.grau_de_confianca
+                })
+            
             # Enviar evento de progresso ao frontend
             yield _formatar_sse("progress", {
                 "sublote": num_sublote,
@@ -319,6 +328,7 @@ async def categorize_ai_on_demand(
                 "classificados_neste_lote": classificados_neste_lote,
                 "total_acumulado": len(mapeamento_ia),
                 "total_itens": len(lote_para_ia),
+                "new_items": sugestoes_parciais,
             })
             
             # Pausa adaptativa entre lotes
