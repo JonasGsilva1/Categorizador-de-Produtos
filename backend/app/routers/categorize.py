@@ -250,20 +250,43 @@ async def categorize_ai_on_demand(
          return {"suggested": []}
 
     # Chama o OpenRouter em lotes menores para evitar estourar o limite de tokens da IA
-    TAMANHO_LOTE_IA = 40
-    logger.info(f"[Tarefa {job_id[:8]}] Solicitada categorização via IA para {len(lote_para_ia)} itens (Lotes de {TAMANHO_LOTE_IA}).")
+    # Lotes de 20 itens reduzem a chance de 429 em modelos gratuitos
+    TAMANHO_LOTE_IA = 20
+    total_sublotes = (len(lote_para_ia) - 1) // TAMANHO_LOTE_IA + 1
+    logger.info(
+        f"[Tarefa {job_id[:8]}] Solicitada categorização via IA para "
+        f"{len(lote_para_ia)} itens ({total_sublotes} sub-lotes de até {TAMANHO_LOTE_IA})."
+    )
     
     mapeamento_ia = {}
+    pausa_entre_lotes = 12  # segundos — pausa base entre sub-lotes (modelos free)
+    
     for i in range(0, len(lote_para_ia), TAMANHO_LOTE_IA):
         lote_atual = lote_para_ia[i : i + TAMANHO_LOTE_IA]
-        logger.info(f"Enviando sub-lote {i // TAMANHO_LOTE_IA + 1} de {(len(lote_para_ia) - 1) // TAMANHO_LOTE_IA + 1} ({len(lote_atual)} itens)...")
+        num_sublote = i // TAMANHO_LOTE_IA + 1
+        logger.info(f"Enviando sub-lote {num_sublote} de {total_sublotes} ({len(lote_atual)} itens)...")
         
         resultado_parcial = await classify_batch_openrouter(lote_atual)
         mapeamento_ia.update(resultado_parcial)
         
-        # Pequena pausa entre lotes se houver mais para evitar rate limits excessivos
+        # Log de progresso parcial
+        if resultado_parcial:
+            logger.info(
+                f"Sub-lote {num_sublote}: {len(resultado_parcial)}/{len(lote_atual)} classificados. "
+                f"Total acumulado: {len(mapeamento_ia)}."
+            )
+        else:
+            logger.warning(
+                f"Sub-lote {num_sublote}: nenhum resultado retornado. "
+                f"Aumentando pausa para reduzir pressão de rate-limit."
+            )
+            # Aumentar a pausa se o lote falhou completamente
+            pausa_entre_lotes = min(pausa_entre_lotes + 10, 60)
+        
+        # Pausa adaptativa entre lotes (modelos free têm rate-limits agressivos)
         if i + TAMANHO_LOTE_IA < len(lote_para_ia):
-            await asyncio.sleep(2)
+            logger.info(f"Aguardando {pausa_entre_lotes}s antes do próximo sub-lote...")
+            await asyncio.sleep(pausa_entre_lotes)
 
     # Prepara a resposta
     sugestoes = []
