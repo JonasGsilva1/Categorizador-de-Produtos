@@ -538,144 +538,152 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
   } | null>(null);
 
   const categorizarComIA = async () => {
-    const pendentes = resultados.filter(
+    let itensParaProcessar = resultados.filter(
       r => r.status === 'Pendente de Revisão' && !edicoes[r.row_index]
     );
 
-    if (pendentes.length === 0) {
+    if (itensParaProcessar.length === 0) {
       alert('Não há itens pendentes para classificar (ou todos já estão editados).');
       return;
     }
 
     setIsAiLoading(true);
     setAiProgress(null);
+    let itemsProcessadosNestaSessao = 0;
 
     try {
-      const payload = {
-        items: pendentes.map(p => ({
-          row_index: p.row_index,
-          grupo: '',
-          subgrupo: ''
-        }))
-      };
+      while (itensParaProcessar.length > 0) {
+        const payload = {
+          items: itensParaProcessar.map(p => ({
+            row_index: p.row_index,
+            grupo: '',
+            subgrupo: ''
+          }))
+        };
 
-      const res = await fetch(`${API_BASE}/jobs/${jobId}/categorize_ai`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify(payload),
-      });
+        const res = await fetch(`${API_BASE}/jobs/${jobId}/categorize_ai`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify(payload),
+        });
 
-      if (!res.ok) {
-        throw new Error('Falha ao processar IA. Verifique se a API Key do OpenRouter está configurada.');
-      }
+        if (!res.ok) {
+          throw new Error('Falha ao processar IA. Verifique se a API Key está configurada.');
+        }
 
-      // Consumir eventos SSE do stream
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('Stream não disponível.');
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('Stream não disponível.');
 
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let sugestoesFinais: any[] = [];
-      let totalSugestoesRecebidas = 0;
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let recebeuResultadosNesteCiclo = false;
+        let idLinhasRecebidas = new Set<number>();
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Separar eventos completos (SSE termina com \n\n)
-        const parts = buffer.split('\n\n');
-        // A última parte quase sempre está incompleta, então volta pro buffer
-        buffer = parts.pop() || '';
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
 
-        for (const eventStr of parts) {
-          if (!eventStr.trim()) continue;
+          for (const eventStr of parts) {
+            if (!eventStr.trim()) continue;
 
-          const lines = eventStr.split('\n');
-          let tipoEvento = '';
-          let dataStr = '';
+            const lines = eventStr.split('\n');
+            let tipoEvento = '';
+            let dataStr = '';
 
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              tipoEvento = line.slice(7).trim();
-            } else if (line.startsWith('data: ')) {
-              // Concatena caso o data seja multi-linha (embora SSE idealmente mande em uma linha)
-              dataStr += line.slice(6).trim();
-            }
-          }
-
-          if (tipoEvento && dataStr) {
-            try {
-              const data = JSON.parse(dataStr);
-              
-              if (tipoEvento === 'start') {
-                setAiProgress({
-                  sublote: 0,
-                  totalSublotes: data.total_sublotes,
-                  totalAcumulado: 0,
-                  totalItens: data.total_itens,
-                });
-              } else if (tipoEvento === 'progress') {
-                setAiProgress({
-                  sublote: data.sublote,
-                  totalSublotes: data.total_sublotes,
-                  totalAcumulado: data.total_acumulado,
-                  totalItens: data.total_itens,
-                });
-                
-                // Aplicar sugestões parciais imediatamente na tela
-                if (data.new_items && data.new_items.length > 0) {
-                  totalSugestoesRecebidas += data.new_items.length;
-                  setEdicoes(anteriores => {
-                    const novas = { ...anteriores };
-                    data.new_items.forEach((sug: any) => {
-                      if (sug.grupo && sug.subgrupo) {
-                        novas[sug.row_index] = {
-                          grupo: sug.grupo,
-                          subgrupo: sug.subgrupo,
-                          viaIA: true
-                        };
-                      }
-                    });
-                    return novas;
-                  });
-                }
-              } else if (tipoEvento === 'result') {
-                sugestoesFinais = data.suggested || [];
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                tipoEvento = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
+                dataStr += line.slice(6).trim();
               }
-            } catch (err) {
-              console.error('Erro ao parsear JSON do evento SSE:', err, 'Data recebida:', dataStr.substring(0, 100) + '...');
+            }
+
+            if (tipoEvento && dataStr) {
+              try {
+                const data = JSON.parse(dataStr);
+                
+                if (tipoEvento === 'start' || tipoEvento === 'progress') {
+                  setAiProgress({
+                    sublote: data.sublote || 0,
+                    totalSublotes: data.total_sublotes,
+                    totalAcumulado: (data.total_acumulado || 0) + itemsProcessadosNestaSessao,
+                    // O total original é itensParaProcessar.length + itemsProcessadosNestaSessao
+                    totalItens: data.total_itens + itemsProcessadosNestaSessao, 
+                  });
+                  
+                  if (data.new_items && data.new_items.length > 0) {
+                    recebeuResultadosNesteCiclo = true;
+                    itemsProcessadosNestaSessao += data.new_items.length;
+                    
+                    data.new_items.forEach((sug: any) => idLinhasRecebidas.add(sug.row_index));
+
+                    setEdicoes(anteriores => {
+                      const novas = { ...anteriores };
+                      data.new_items.forEach((sug: any) => {
+                        if (sug.grupo && sug.subgrupo) {
+                          novas[sug.row_index] = {
+                            grupo: sug.grupo,
+                            subgrupo: sug.subgrupo,
+                            viaIA: true
+                          };
+                        }
+                      });
+                      return novas;
+                    });
+                  }
+                } else if (tipoEvento === 'result') {
+                  // Fallback se n tiver vindo no progress
+                  if (!recebeuResultadosNesteCiclo && data.suggested && data.suggested.length > 0) {
+                    recebeuResultadosNesteCiclo = true;
+                    itemsProcessadosNestaSessao += data.suggested.length;
+                    data.suggested.forEach((sug: any) => idLinhasRecebidas.add(sug.row_index));
+
+                    setEdicoes(anteriores => {
+                      const novas = { ...anteriores };
+                      data.suggested.forEach((sug: any) => {
+                        if (sug.grupo && sug.subgrupo) {
+                          novas[sug.row_index] = { grupo: sug.grupo, subgrupo: sug.subgrupo, viaIA: true };
+                        }
+                      });
+                      return novas;
+                    });
+                  }
+                }
+              } catch (err) {
+                console.error('Erro ao parsear JSON SSE:', err);
+              }
             }
           }
         }
+
+        // Conexão terminou (seja por sucesso ou porque a Vercel derrubou por tempo limite)
+        if (!recebeuResultadosNesteCiclo) {
+          // Se a conexão fechou sem receber NADA útil, provável erro de proxy persistente. Para evitar loop infinito:
+          console.warn('Conexão fechada sem progresso.');
+          break;
+        }
+
+        // Filtra os itens para a próxima iteração, caso a conexão tenha caído antes de terminar
+        itensParaProcessar = itensParaProcessar.filter(item => !idLinhasRecebidas.has(item.row_index));
+
+        if (itensParaProcessar.length > 0) {
+          console.log(`Conexão caiu, auto-retomando para os ${itensParaProcessar.length} itens restantes...`);
+          // Pequena pausa antes de reconectar para dar fôlego ao servidor
+          await new Promise(r => setTimeout(r, 2000));
+        }
       }
 
-      // Aplicar sugestões finais caso tenham vindo apenas no evento 'result' (fallback)
-      if (sugestoesFinais.length > 0 && totalSugestoesRecebidas === 0) {
-        totalSugestoesRecebidas = sugestoesFinais.length;
-        setEdicoes(anteriores => {
-          const novas = { ...anteriores };
-          sugestoesFinais.forEach(sug => {
-            if (sug.grupo && sug.subgrupo) {
-              novas[sug.row_index] = {
-                grupo: sug.grupo,
-                subgrupo: sug.subgrupo,
-                viaIA: true
-              };
-            }
-          });
-          return novas;
-        });
-      }
-
-      if (totalSugestoesRecebidas === 0) {
-        alert('A IA não retornou sugestões ou a conexão caiu. Tente novamente mais tarde.');
+      if (itemsProcessadosNestaSessao > 0) {
+        alert(`${itemsProcessadosNestaSessao} itens classificados pela IA!\nPor favor, revise a lista e clique em "Salvar Progresso".`);
       } else {
-        alert(`${totalSugestoesRecebidas} itens classificados pela IA!\n\nSe ainda houver pendentes (devido ao tempo limite da conexão), você pode clicar no botão da IA novamente para continuar de onde parou.`);
+        alert('A IA não retornou sugestões. Tente novamente mais tarde.');
       }
 
     } catch (err: any) {
