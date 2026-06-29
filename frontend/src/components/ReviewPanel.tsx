@@ -550,6 +550,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     setIsAiLoading(true);
     setAiProgress(null);
     let itemsProcessadosNestaSessao = 0;
+    let vaziosConsecutivos = 0;
 
     try {
       while (itensParaProcessar.length > 0) {
@@ -580,6 +581,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
         const decoder = new TextDecoder();
         let buffer = '';
         let recebeuResultadosNesteCiclo = false;
+        let conexaoTeveAtividade = false;
         let idLinhasRecebidas = new Set<number>();
 
         while (true) {
@@ -607,6 +609,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
 
             if (tipoEvento && dataStr) {
               try {
+                conexaoTeveAtividade = true;
                 const data = JSON.parse(dataStr);
                 
                 if (tipoEvento === 'start' || tipoEvento === 'progress') {
@@ -614,7 +617,6 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                     sublote: data.sublote || 0,
                     totalSublotes: data.total_sublotes,
                     totalAcumulado: (data.total_acumulado || 0) + itemsProcessadosNestaSessao,
-                    // O total original é itensParaProcessar.length + itemsProcessadosNestaSessao
                     totalItens: data.total_itens + itemsProcessadosNestaSessao, 
                   });
                   
