@@ -535,6 +535,8 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
     totalSublotes: number;
     totalAcumulado: number;
     totalItens: number;
+    itemsProcessadosNestaSessao?: number;
+    totalItensInicial?: number;
   } | null>(null);
 
   const categorizarComIA = async () => {
@@ -547,6 +549,7 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
       return;
     }
 
+    const totalItensInicial = itensParaProcessar.length;
     setIsAiLoading(true);
     setAiProgress(null);
     let itemsProcessadosNestaSessao = 0;
@@ -613,13 +616,6 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                 const data = JSON.parse(dataStr);
                 
                 if (tipoEvento === 'start' || tipoEvento === 'progress') {
-                  setAiProgress({
-                    sublote: data.sublote || 0,
-                    totalSublotes: data.total_sublotes,
-                    totalAcumulado: (data.total_acumulado || 0) + itemsProcessadosNestaSessao,
-                    totalItens: data.total_itens + itemsProcessadosNestaSessao, 
-                  });
-                  
                   if (data.new_items && data.new_items.length > 0) {
                     recebeuResultadosNesteCiclo = true;
                     itemsProcessadosNestaSessao += data.new_items.length;
@@ -639,7 +635,35 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
                       });
                       return novas;
                     });
+
+                    // Auto-salvar no backend silenciosamente
+                    const autoSavePayload = data.new_items
+                      .filter((sug: any) => sug.grupo && sug.subgrupo)
+                      .map((sug: any) => ({
+                        row_index: sug.row_index,
+                        grupo: sug.grupo,
+                        subgrupo: sug.subgrupo,
+                      }));
+                    if (autoSavePayload.length > 0) {
+                      fetch(`${API_BASE}/jobs/${jobId}/results`, {
+                        method: 'PATCH',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${session.access_token}`,
+                        },
+                        body: JSON.stringify({ items: autoSavePayload }),
+                      }).catch(e => console.error('Erro no auto-save da IA', e));
+                    }
                   }
+
+                  setAiProgress({
+                    sublote: data.sublote || 0,
+                    totalSublotes: data.total_sublotes,
+                    totalAcumulado: (data.total_acumulado || 0) + itemsProcessadosNestaSessao,
+                    totalItens: data.total_itens + itemsProcessadosNestaSessao, 
+                    itemsProcessadosNestaSessao,
+                    totalItensInicial
+                  });
                 } else if (tipoEvento === 'result') {
                   // Fallback se n tiver vindo no progress
                   if (!recebeuResultadosNesteCiclo && data.suggested && data.suggested.length > 0) {
