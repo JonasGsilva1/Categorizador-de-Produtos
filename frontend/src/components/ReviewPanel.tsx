@@ -586,17 +586,28 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
 
         buffer += decoder.decode(value, { stream: true });
         
-        // Processar eventos SSE completos no buffer
-        const linhas = buffer.split('\n');
-        buffer = '';
-        
-        let tipoEvento = '';
+        // Separar eventos completos (SSE termina com \n\n)
+        const parts = buffer.split('\n\n');
+        // A última parte quase sempre está incompleta, então volta pro buffer
+        buffer = parts.pop() || '';
 
-        for (const linha of linhas) {
-          if (linha.startsWith('event: ')) {
-            tipoEvento = linha.slice(7).trim();
-          } else if (linha.startsWith('data: ')) {
-            const dataStr = linha.slice(6).trim();
+        for (const eventStr of parts) {
+          if (!eventStr.trim()) continue;
+
+          const lines = eventStr.split('\n');
+          let tipoEvento = '';
+          let dataStr = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              tipoEvento = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              // Concatena caso o data seja multi-linha (embora SSE idealmente mande em uma linha)
+              dataStr += line.slice(6).trim();
+            }
+          }
+
+          if (tipoEvento && dataStr) {
             try {
               const data = JSON.parse(dataStr);
               
@@ -617,17 +628,9 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
               } else if (tipoEvento === 'result') {
                 sugestoesFinais = data.suggested || [];
               }
-            } catch {
-              // JSON incompleto — guardar no buffer para próxima iteração
-              buffer = linha + '\n';
+            } catch (err) {
+              console.error('Erro ao parsear JSON do evento SSE:', err, 'Data recebida:', dataStr.substring(0, 100) + '...');
             }
-            tipoEvento = '';
-          } else if (linha.trim() === '') {
-            // Linha vazia = fim de evento SSE
-            tipoEvento = '';
-          } else {
-            // Linha parcial — guardar para próximo chunk
-            buffer += linha + '\n';
           }
         }
       }

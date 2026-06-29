@@ -271,43 +271,58 @@ async def categorize_ai_on_demand(
             "tamanho_lote": TAMANHO_LOTE_IA,
         })
         
+        lote_para_processar = list(lote_para_ia)
         mapeamento_ia = {}
         pausa_entre_lotes = 12
+        num_sublote = 0
         
-        for i in range(0, len(lote_para_ia), TAMANHO_LOTE_IA):
-            lote_atual = lote_para_ia[i : i + TAMANHO_LOTE_IA]
-            num_sublote = i // TAMANHO_LOTE_IA + 1
+        while lote_para_processar:
+            num_sublote += 1
+            lote_atual = lote_para_processar[:TAMANHO_LOTE_IA]
             
-            logger.info(f"Enviando sub-lote {num_sublote} de {total_sublotes} ({len(lote_atual)} itens)...")
+            logger.info(
+                f"Enviando sub-lote {num_sublote} ({len(lote_atual)} itens, "
+                f"restam {len(lote_para_processar)} na fila geral)..."
+            )
             
             resultado_parcial = await classify_batch_openrouter(lote_atual)
             mapeamento_ia.update(resultado_parcial)
-            
             classificados_neste_lote = len(resultado_parcial)
             
-            if resultado_parcial:
+            if classificados_neste_lote > 0:
                 logger.info(
                     f"Sub-lote {num_sublote}: {classificados_neste_lote}/{len(lote_atual)} classificados. "
                     f"Total acumulado: {len(mapeamento_ia)}."
                 )
+                # Sucesso (total ou parcial): remove apenas os classificados.
+                # Itens ignorados por JSON truncado continuam na fila para tentar no próximo lote.
+                itens_sucesso = set(resultado_parcial.keys())
+                lote_para_processar = [
+                    item for item in lote_para_processar if item["id_linha"] not in itens_sucesso
+                ]
             else:
                 logger.warning(
-                    f"Sub-lote {num_sublote}: nenhum resultado retornado. "
-                    f"Aumentando pausa para reduzir pressão de rate-limit."
+                    f"Sub-lote {num_sublote}: nenhum resultado retornado (0/{len(lote_atual)}). "
+                    f"Descartando estes {len(lote_atual)} itens para evitar loop infinito."
                 )
+                # Falha total: remove o lote inteiro da fila
+                lote_para_processar = lote_para_processar[TAMANHO_LOTE_IA:]
                 pausa_entre_lotes = min(pausa_entre_lotes + 10, 60)
+            
+            # Recalcular total_sublotes estimado para a UI
+            sublotes_restantes = (len(lote_para_processar) - 1) // TAMANHO_LOTE_IA + 1 if lote_para_processar else 0
             
             # Enviar evento de progresso ao frontend
             yield _formatar_sse("progress", {
                 "sublote": num_sublote,
-                "total_sublotes": total_sublotes,
+                "total_sublotes": num_sublote + sublotes_restantes,
                 "classificados_neste_lote": classificados_neste_lote,
                 "total_acumulado": len(mapeamento_ia),
                 "total_itens": len(lote_para_ia),
             })
             
             # Pausa adaptativa entre lotes
-            if i + TAMANHO_LOTE_IA < len(lote_para_ia):
+            if lote_para_processar:
                 logger.info(f"Aguardando {pausa_entre_lotes}s antes do próximo sub-lote...")
                 await asyncio.sleep(pausa_entre_lotes)
 
