@@ -21,19 +21,23 @@ logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Pool de modelos gratuitos do OpenRouter (ordem de preferência)
+# Atualizado em 2026-06-29 a partir de https://openrouter.ai/api/v1/models
 # ──────────────────────────────────────────────────────────────────────────────
 MODELOS_GRATUITOS: list[str] = [
     "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-235b-a22b:free",
-    "deepseek/deepseek-r1-0528:free",
-    "qwen/qwen3-30b-a3b:free",
-    "google/gemma-3-27b-it:free",
-    "mistralai/mistral-small-3.1-24b-instruct:free",
-    "google/gemma-3-12b-it:free",
+    "qwen/qwen3-coder:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "openai/gpt-oss-120b:free",
+    "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
 ]
 
 # Modelos que suportam response_format json_object
-_MODELOS_COM_JSON_MODE = {"llama", "qwen", "openai", "deepseek", "mistral"}
+_MODELOS_COM_JSON_MODE = {"llama", "qwen", "openai", "deepseek", "mistral", "gemma", "nemotron", "hermes"}
 
 
 def _suporta_json_mode(modelo: str) -> bool:
@@ -46,20 +50,31 @@ def _suporta_json_mode(modelo: str) -> bool:
 # Estado de throttle global — compartilhado entre chamadas sequenciais
 # ──────────────────────────────────────────────────────────────────────────────
 class ThrottleState:
-    """Rastreia cooldowns por modelo para evitar martelar modelos limitados."""
+    """Rastreia cooldowns e banimentos por modelo."""
 
     def __init__(self):
         # modelo -> timestamp (epoch) a partir do qual pode ser usado novamente
         self._cooldown_until: dict[str, float] = {}
+        # modelos permanentemente banidos (404 = não existe mais como free)
+        self._banidos: set[str] = set()
 
     def marcar_rate_limit(self, modelo: str, segundos: int) -> None:
         self._cooldown_until[modelo] = time.monotonic() + segundos
 
+    def banir_permanente(self, modelo: str) -> None:
+        """Marca modelo como permanentemente indisponível (ex: 404)."""
+        self._banidos.add(modelo)
+        logger.info(f"Modelo '{modelo}' banido permanentemente desta sessão.")
+
     def disponivel(self, modelo: str) -> bool:
+        if modelo in self._banidos:
+            return False
         limite = self._cooldown_until.get(modelo, 0)
         return time.monotonic() >= limite
 
     def segundos_restantes(self, modelo: str) -> float:
+        if modelo in self._banidos:
+            return float("inf")
         limite = self._cooldown_until.get(modelo, 0)
         restante = limite - time.monotonic()
         return max(0, restante)
@@ -126,6 +141,9 @@ async def classify_batch_openrouter(
         if m != modelo_principal:
             fila_modelos.append(m)
 
+    # Filtrar modelos já banidos de sessões anteriores (se o processo ainda estiver rodando)
+    fila_modelos = [m for m in fila_modelos if _throttle.disponivel(m) or m not in _throttle._banidos]
+
     # Construir prompt (independe do modelo)
     itens_texto = []
     for p in lote_produtos:
@@ -157,10 +175,13 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
         "X-Title": "Categorizador de Produtos",
     }
 
-    MAX_TENTATIVAS = 8  # tentativas totais (contando rotações de modelo)
+    MAX_TENTATIVAS = 12  # tentativas reais (não conta 404 de modelos inválidos)
 
     async with httpx.AsyncClient(timeout=180.0) as client:
-        for tentativa in range(1, MAX_TENTATIVAS + 1):
+        tentativa = 0
+        while tentativa < MAX_TENTATIVAS:
+            tentativa += 1
+
             # ── Escolher modelo disponível ────────────────────────────────
             modelo_escolhido = None
             for m in fila_modelos:
@@ -169,13 +190,18 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
                     break
 
             if modelo_escolhido is None:
-                # Todos em cooldown — esperar o menor tempo restante
-                esperas = {m: _throttle.segundos_restantes(m) for m in fila_modelos}
+                # Filtrar modelos banidos antes de calcular esperas
+                modelos_vivos = [m for m in fila_modelos if m not in _throttle._banidos]
+                if not modelos_vivos:
+                    logger.error("Todos os modelos foram banidos (404). Nenhum modelo free disponível.")
+                    return {}
+
+                esperas = {m: _throttle.segundos_restantes(m) for m in modelos_vivos}
                 modelo_menor_espera = min(esperas, key=esperas.get)
                 tempo_espera = esperas[modelo_menor_espera]
                 logger.warning(
                     f"Todos os modelos em cooldown. Aguardando {tempo_espera:.0f}s "
-                    f"até {modelo_menor_espera} liberar..."
+                    f"até '{modelo_menor_espera}' liberar..."
                 )
                 await asyncio.sleep(tempo_espera + 1)
                 modelo_escolhido = modelo_menor_espera
@@ -218,6 +244,16 @@ Não inclua formatação markdown (```json) ou texto extra, apenas o JSON puro."
                     )
                     # Pequena pausa antes de tentar próximo modelo (evita burst)
                     await asyncio.sleep(2)
+                    continue
+
+                # ── Modelo não existe / não é free (404) → banir sem gastar tentativa
+                if response.status_code == 404:
+                    logger.warning(
+                        f"Modelo '{modelo_escolhido}' não disponível (404). "
+                        f"Removendo do pool e tentando próximo..."
+                    )
+                    _throttle.banir_permanente(modelo_escolhido)
+                    tentativa -= 1  # NÃO contar como tentativa real
                     continue
 
                 # ── Outros erros HTTP ─────────────────────────────────────
