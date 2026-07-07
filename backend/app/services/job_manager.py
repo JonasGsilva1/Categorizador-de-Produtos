@@ -82,6 +82,9 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
             + sumario["camada2_llm_aprovado"]
         )
 
+        # Pendentes = itens não classificados + itens com erro (ambos têm status "Pendente de Revisão")
+        total_pendentes = sumario["camada2_llm_pendente_revisao"] + sumario["erros"]
+
         # 3. Ordenar e persistir resultados em JSON (para revisão no frontend)
         resultados_ordenados = sorted(resultados, key=lambda r: r.row_index)
         caminho_resultados_json = os.path.join(configuracoes.temp_storage_path, f"{job_id}_results.json")
@@ -112,7 +115,7 @@ async def start_job(job_id: str, file_path: str, user_id: str) -> None:
                 caminho_resultados_json,
                 total_linhas,
                 total_aprovados,
-                sumario["camada2_llm_pendente_revisao"],
+                total_pendentes,
                 sumario["erros"],
                 job_id,
             )

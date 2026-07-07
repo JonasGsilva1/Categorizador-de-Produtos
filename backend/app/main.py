@@ -29,10 +29,7 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Iniciando Categorizador Inteligente...")
     configuracoes = get_settings()
     logger.info(f"   Frontend URL (CORS): {configuracoes.frontend_url}")
-    logger.info(f"   Modelo de Embedding: {configuracoes.embedding_model} ({configuracoes.embedding_dimensions}d)")
-    logger.info(f"   Modelo LLM: {configuracoes.llm_model}")
     logger.info(f"   Threshold Similaridade: {configuracoes.similarity_threshold}")
-    logger.info(f"   Threshold Confiança LLM: {configuracoes.llm_confidence_threshold}%")
     logger.info(f"   PORT (Railway): {os.getenv('PORT', 'não definido')}")
 
     # Garante que a pool seja criada com sucesso, senão a aplicação não iniciará.

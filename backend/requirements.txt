@@ -6,8 +6,6 @@ uvicorn[standard]==0.34.3
 asyncpg==0.30.0
 pgvector==0.3.6
 
-# AI Provider
-google-genai==0.3.0
 
 # Excel I/O & Data
 pandas==2.2.3

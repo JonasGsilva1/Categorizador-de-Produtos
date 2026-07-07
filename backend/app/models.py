@@ -29,23 +29,6 @@ class ProdutoSaida(BaseModel):
     status: str = Field(description="Aprovado ou Pendente de Revisão")
 
 
-class ClassificacaoLLM(BaseModel):
-    """Resposta estruturada do LLM."""
-    grupo: str = Field(description="Grupo/categoria principal do produto")
-    subgrupo: str = Field(description="Subcategoria do produto")
-    grau_de_confianca: int = Field(
-        ge=0, le=100,
-        description="Grau de confiança da classificação (0-100%)"
-    )
-
-
-class ResultadoBuscaVetorial(BaseModel):
-    """Resultado de busca por similaridade vetorial."""
-    id: int
-    descricao: str
-    grupo: str
-    subgrupo: str
-    similarity: float
 
 
 # =============================================================

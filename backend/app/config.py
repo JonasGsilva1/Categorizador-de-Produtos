@@ -18,28 +18,12 @@ class Settings(BaseSettings):
     # --- Banco de Dados ---
     database_url: str
 
-    # --- Provedores de IA (Gemini) ---
-    gemini_api_key: str = ""
-    
-    # --- Provedores de IA (OpenRouter) ---
-    openrouter_api_key: str = ""
-    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
-
-    # --- Provedores de IA (Ollama Local) ---
-    ollama_base_url: str = "http://localhost:11434/v1/chat/completions"
-    ollama_model: str = "qwen2.5:3b"
-
     # --- Autenticação ---
     supabase_jwt_secret: str = ""
     supabase_url: str = ""
 
     # --- Funil ---
     similarity_threshold: float = 0.98
-    llm_confidence_threshold: int = 95
-    embedding_batch_size: int = 10
-    embedding_model: str = "gemini-embedding-001"
-    embedding_dimensions: int = 1536
-    llm_model: str = "gemini-2.5-flash"
 
     # --- CORS ---
     frontend_url: str = "http://localhost:3000"
