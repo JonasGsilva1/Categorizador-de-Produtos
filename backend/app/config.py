@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
 
+    # --- Provedores de IA (Ollama Local) ---
+    ollama_base_url: str = "http://localhost:11434/v1/chat/completions"
+    ollama_model: str = "qwen2.5:3b"
+
     # --- Autenticação ---
     supabase_jwt_secret: str = ""
     supabase_url: str = ""

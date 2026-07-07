@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { API_BASE } from '@/lib/api';
+import { verificarOllamaDisponivel, classificarViaOllamaLocal } from '@/lib/ollamaClient';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos de dados
@@ -552,194 +553,133 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
       return;
     }
 
+    // Verificar se o Ollama está rodando localmente
+    const ollamaDisponivel = await verificarOllamaDisponivel();
+    if (!ollamaDisponivel) {
+      alert(
+        '❌ Ollama não encontrado em localhost:11434.\n\n' +
+        'Para usar a IA local, certifique-se de que:\n' +
+        '1. O Ollama está instalado (https://ollama.com)\n' +
+        '2. Rode no terminal: set OLLAMA_ORIGINS=* && ollama serve\n' +
+        '3. Baixe o modelo: ollama run qwen2.5:3b'
+      );
+      return;
+    }
+
     const totalItensInicial = itensParaProcessar.length;
     setIsAiLoading(true);
     setAiProgress(null);
     let itemsProcessadosNestaSessao = 0;
-    let vaziosConsecutivos = 0;
+
+    // Tamanho de lote menor para modelos 3B (capacidade limitada de contexto)
+    const TAMANHO_LOTE = 10;
+    const totalSublotes = Math.ceil(itensParaProcessar.length / TAMANHO_LOTE);
 
     try {
-      while (itensParaProcessar.length > 0) {
-        const payload = {
-          items: itensParaProcessar.map(p => ({
-            row_index: p.row_index,
-            grupo: '',
-            subgrupo: ''
-          }))
-        };
+      let numSublote = 0;
 
-        const res = await fetch(`${API_BASE}/jobs/${jobId}/categorize_ai`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify(payload),
+      while (itensParaProcessar.length > 0) {
+        numSublote++;
+        const loteAtual = itensParaProcessar.slice(0, TAMANHO_LOTE);
+
+        // Atualizar progresso na UI
+        const sublotesRestantes = Math.ceil(itensParaProcessar.length / TAMANHO_LOTE);
+        setAiProgress({
+          sublote: numSublote,
+          totalSublotes: numSublote + sublotesRestantes - 1,
+          totalAcumulado: itemsProcessadosNestaSessao,
+          totalItens: totalItensInicial,
+          itemsProcessadosNestaSessao,
+          totalItensInicial,
         });
 
-        if (!res.ok) {
-          throw new Error('Falha ao processar IA. Verifique se a API Key está configurada.');
-        }
+        try {
+          // Chamar Ollama DIRETAMENTE do navegador (localhost)
+          const resultadosOllama = await classificarViaOllamaLocal(
+            loteAtual.map(p => ({
+              row_index: p.row_index,
+              descricao: p.descricao,
+              ncm: p.ncm || undefined,
+            }))
+          );
 
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('Stream não disponível.');
+          if (resultadosOllama.length > 0) {
+            itemsProcessadosNestaSessao += resultadosOllama.length;
 
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let recebeuResultadosNesteCiclo = false;
-        let conexaoTeveAtividade = false;
-        let idLinhasRecebidas = new Set<number>();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split('\n\n');
-          buffer = parts.pop() || '';
-
-          for (const eventStr of parts) {
-            if (!eventStr.trim()) continue;
-
-            const lines = eventStr.split('\n');
-            let tipoEvento = '';
-            let dataStr = '';
-
-            for (const line of lines) {
-              if (line.startsWith('event: ')) {
-                tipoEvento = line.slice(7).trim();
-              } else if (line.startsWith('data: ')) {
-                dataStr += line.slice(6).trim();
-              }
-            }
-
-            if (tipoEvento && dataStr) {
-              try {
-                conexaoTeveAtividade = true;
-                const data = JSON.parse(dataStr);
-                
-                if (tipoEvento === 'start' || tipoEvento === 'progress') {
-                  if (data.new_items && data.new_items.length > 0) {
-                    recebeuResultadosNesteCiclo = true;
-                    itemsProcessadosNestaSessao += data.new_items.length;
-                    
-                    data.new_items.forEach((sug: any) => idLinhasRecebidas.add(sug.row_index));
-
-                    setEdicoes(anteriores => {
-                      const novas = { ...anteriores };
-                      data.new_items.forEach((sug: any) => {
-                        if (sug.grupo && sug.subgrupo) {
-                          novas[sug.row_index] = {
-                            grupo: sug.grupo,
-                            subgrupo: sug.subgrupo,
-                            viaIA: true
-                          };
-                        }
-                      });
-                      return novas;
-                    });
-
-                    // Auto-salvar no backend silenciosamente
-                    const autoSavePayload = data.new_items
-                      .filter((sug: any) => sug.grupo && sug.subgrupo)
-                      .map((sug: any) => ({
-                        row_index: sug.row_index,
-                        grupo: sug.grupo,
-                        subgrupo: sug.subgrupo,
-                        origem: 'IA',
-                        status: 'Pendente de Revisão'
-                      }));
-                    if (autoSavePayload.length > 0) {
-                      fetch(`${API_BASE}/jobs/${jobId}/results`, {
-                        method: 'PATCH',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          Authorization: `Bearer ${session.access_token}`,
-                        },
-                        body: JSON.stringify({ items: autoSavePayload }),
-                      }).catch(e => console.error('Erro no auto-save da IA', e));
-                    }
-                  }
-
-                  setAiProgress({
-                    sublote: data.sublote || 0,
-                    totalSublotes: data.total_sublotes,
-                    totalAcumulado: (data.total_acumulado || 0) + itemsProcessadosNestaSessao,
-                    totalItens: data.total_itens + itemsProcessadosNestaSessao, 
-                    itemsProcessadosNestaSessao,
-                    totalItensInicial
-                  });
-                } else if (tipoEvento === 'result') {
-                  // Fallback se n tiver vindo no progress
-                  if (!recebeuResultadosNesteCiclo && data.suggested && data.suggested.length > 0) {
-                    recebeuResultadosNesteCiclo = true;
-                    itemsProcessadosNestaSessao += data.suggested.length;
-                    data.suggested.forEach((sug: any) => idLinhasRecebidas.add(sug.row_index));
-
-                    setEdicoes(anteriores => {
-                      const novas = { ...anteriores };
-                      data.suggested.forEach((sug: any) => {
-                        if (sug.grupo && sug.subgrupo) {
-                          novas[sug.row_index] = { grupo: sug.grupo, subgrupo: sug.subgrupo, viaIA: true };
-                        }
-                      });
-                      return novas;
-                    });
-
-                    // Auto-salvar no backend silenciosamente (fallback)
-                    const autoSavePayload = data.suggested
-                      .filter((sug: any) => sug.grupo && sug.subgrupo)
-                      .map((sug: any) => ({
-                        row_index: sug.row_index,
-                        grupo: sug.grupo,
-                        subgrupo: sug.subgrupo,
-                        origem: 'IA',
-                        status: 'Pendente de Revisão'
-                      }));
-                    if (autoSavePayload.length > 0) {
-                      fetch(`${API_BASE}/jobs/${jobId}/results`, {
-                        method: 'PATCH',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          Authorization: `Bearer ${session.access_token}`,
-                        },
-                        body: JSON.stringify({ items: autoSavePayload }),
-                      }).catch(e => console.error('Erro no auto-save da IA fallback', e));
-                    }
-                  }
+            // Aplicar edições no estado local
+            setEdicoes(anteriores => {
+              const novas = { ...anteriores };
+              resultadosOllama.forEach(sug => {
+                if (sug.grupo && sug.subgrupo) {
+                  novas[sug.row_index] = {
+                    grupo: sug.grupo,
+                    subgrupo: sug.subgrupo,
+                    viaIA: true,
+                  };
                 }
-              } catch (err) {
-                console.error('Erro ao parsear JSON SSE:', err);
-              }
+              });
+              return novas;
+            });
+
+            // Auto-salvar no backend (Railway) silenciosamente
+            const autoSavePayload = resultadosOllama
+              .filter(sug => sug.grupo && sug.subgrupo)
+              .map(sug => ({
+                row_index: sug.row_index,
+                grupo: sug.grupo,
+                subgrupo: sug.subgrupo,
+                origem: 'IA Local',
+                status: 'Pendente de Revisão',
+              }));
+
+            if (autoSavePayload.length > 0) {
+              fetch(`${API_BASE}/jobs/${jobId}/results`, {
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ items: autoSavePayload }),
+              }).catch(e => console.error('Erro no auto-save da IA local', e));
             }
+
+            // Remover itens classificados da fila
+            const idsClassificados = new Set(resultadosOllama.map(r => r.row_index));
+            itensParaProcessar = itensParaProcessar.filter(
+              item => !idsClassificados.has(item.row_index)
+            );
+          } else {
+            // Nenhum resultado — remover lote atual para evitar loop infinito
+            console.warn(`Sub-lote ${numSublote}: Ollama não retornou resultados.`);
+            itensParaProcessar = itensParaProcessar.slice(TAMANHO_LOTE);
           }
+        } catch (erroLote: any) {
+          console.error(`Erro no sub-lote ${numSublote}:`, erroLote);
+          // Remover lote com erro para não travar
+          itensParaProcessar = itensParaProcessar.slice(TAMANHO_LOTE);
         }
 
-        // Conexão terminou (seja por sucesso ou porque a Vercel derrubou por tempo limite)
-        if (!recebeuResultadosNesteCiclo) {
-          // Se a conexão fechou sem receber NADA útil, provável erro de proxy persistente. Para evitar loop infinito:
-          console.warn('Conexão fechada sem progresso.');
-          break;
-        }
-
-        // Filtra os itens para a próxima iteração, caso a conexão tenha caído antes de terminar
-        itensParaProcessar = itensParaProcessar.filter(item => !idLinhasRecebidas.has(item.row_index));
-
-        if (itensParaProcessar.length > 0) {
-          console.log(`Conexão caiu, auto-retomando para os ${itensParaProcessar.length} itens restantes...`);
-          // Pequena pausa antes de reconectar para dar fôlego ao servidor
-          await new Promise(r => setTimeout(r, 2000));
-        }
+        // Atualizar progresso final do lote
+        setAiProgress({
+          sublote: numSublote,
+          totalSublotes: numSublote + Math.ceil(itensParaProcessar.length / TAMANHO_LOTE),
+          totalAcumulado: itemsProcessadosNestaSessao,
+          totalItens: totalItensInicial,
+          itemsProcessadosNestaSessao,
+          totalItensInicial,
+        });
       }
 
       if (itemsProcessadosNestaSessao > 0) {
-        alert(`${itemsProcessadosNestaSessao} itens classificados pela IA!\nPor favor, revise a lista e clique em "Salvar Progresso".`);
+        alert(
+          `✅ ${itemsProcessadosNestaSessao} itens classificados pela IA local (Ollama)!\n` +
+          'Por favor, revise a lista e clique em "Salvar Progresso".'
+        );
       } else {
-        alert('A IA não retornou sugestões. Tente novamente mais tarde.');
+        alert('A IA local não retornou sugestões. Verifique se o modelo está carregado no Ollama.');
       }
-
     } catch (err: any) {
-      alert(err.message || 'Erro ao chamar a IA.');
+      alert(err.message || 'Erro ao chamar a IA local.');
     } finally {
       setIsAiLoading(false);
       setAiProgress(null);
@@ -867,10 +807,10 @@ export default function ReviewPanel({ jobId, session, aoFinalizar, aoVoltar }: P
               onClick={categorizarComIA} 
               disabled={isAiLoading}
               className="review-btn-back" 
-              title="Mandar itens pendentes para a Inteligência Artificial (OpenRouter)"
+              title="Classificar via IA local (Ollama rodando na sua máquina)"
               style={{ background: 'rgba(167, 139, 250, 0.1)', color: '#a78bfa', borderColor: 'rgba(167, 139, 250, 0.3)' }}
             >
-              {isAiLoading ? '🪄 Pensando...' : '🪄 Classificar com IA'}
+              {isAiLoading ? '🪄 Pensando...' : '🪄 Classificar com IA Local'}
             </button>
           )}
           <button onClick={() => setMostrarEditor(true)} className="review-btn-back" title="Editar nomes de grupos e subgrupos">
